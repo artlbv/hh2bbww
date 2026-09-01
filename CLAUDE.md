@@ -41,8 +41,8 @@ where the leading `c` becomes `l`. On branch `HH_HHH_incl_2024` the valid names 
 | `c23prev14` | `l23prev14` | 2023 preBPix, nano v14 |
 | `c23postv14` | `l23postv14` | 2023 postBPix, nano v14 |
 | `c24v15` | `l24v15` | 2024, nano v15 (+ custom HHH samples) |
-| `c25v15` | `l25v15` | 2025, nano v15 — needs a different cmsdb pin, see below |
-| `c26v15` | `l26v15` | 2026, nano v15 — needs a different cmsdb pin, see below |
+| `c25v15` | `l25v15` | 2025, nano v15 — campaign loads, config build not implemented yet |
+| `c26v15` | `l26v15` | 2026, nano v15 — campaign loads, config build not implemented yet |
 
 On this branch **only `c24v15` / `l24v15` actually build.** `hbw/config/processes.py`
 unconditionally does `config.add_process(config.x.procs.n.ttbb_custom)`, and `ttbb_custom` is
@@ -52,10 +52,20 @@ only reachable when the campaign contains the `ttbb_{dl,sl,fh}_powheg` datasets 
 Consequently `cf.CreateDatacards --inference-model default` does not work here either, because
 that inference model spans the Run 3 v14 configs.
 
-`c25v15` / `c26v15` need the `run3_2025_nano_v15` and `run3_2026_nano_v15` campaigns, which live
-on the `MultiHiggs_Run3` branch of `uhh-cms/cmsdb` — a branch that has *diverged* from the
-`HHH_HH_2024` commit this repo pins for `modules/cmsdb`. Using them means moving the submodule
-pin; `c24v15` still builds with `MultiHiggs_Run3`, but nothing else has been checked.
+`modules/cmsdb` is pinned to `uhh-cms/cmsdb@849164c` (branch `MultiHiggs_Run3`) on this fork,
+rather than upstream's `HHH_HH_2024` — the two have diverged, and only `MultiHiggs_Run3` carries
+`run3_2025_nano_v15` / `run3_2026_nano_v15`. `setup.sh` runs `cf_init_submodule`, which resets
+submodules to the recorded pin on every source, so a pin change has to be **committed**, not just
+checked out.
+
+With that pin the 2025 and 2026 campaigns import and `hbw.BuildCampaignSummary` succeeds for
+them, but the config build itself is not implemented yet:
+
+- `c25v15` → `KeyError: '2025'` — the `cpn_tag` → (color, sub_id) map at
+  `hbw/config/processes.py:109` has no 2025 entry.
+- `c26v15` → `hbw/config/config_run2.py:86` lists `implemented_years = [2017, 2022, 2023, 2024,
+  2025]`, so 2026 is rejected. The intended `NotImplementedError` is itself masked by
+  `', '.join(implemented_years)` raising `TypeError` on a list of ints.
 
 `c17` and `l17` are dead names (renamed in upstream `fdab666`). If a task dies with
 `ValueError: object 'X' not known to index 'UniqueObjectIndex(cls=order.config.Config, ...)'`,

@@ -75,7 +75,7 @@ Configs are registered via `add_lazy_config` in [create_analysis.py](hbw/analysi
 
 On this branch only `c24v15` is fully usable: `configure_hbw_processes` requires the
 `ttbb_{dl,sl,fh}_powheg` datasets, which only the 2024 campaign provides, and the 2025/2026
-campaigns live on a cmsdb branch that this repo does not pin.
+campaigns load but their config build is not implemented yet (see `CLAUDE.md`).
 
 Most tasks can use a `--config` parameter as an input, e.g.
 ```
