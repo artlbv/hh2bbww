@@ -35,7 +35,7 @@ import law
 
 from columnflow.production import Producer, producer
 from columnflow.util import maybe_import
-from columnflow.columnar_util import set_ak_column, optional_column as optional
+from columnflow.columnar_util import EMPTY_FLOAT, set_ak_column, optional_column as optional
 
 np = maybe_import("numpy")
 ak = maybe_import("awkward")
@@ -136,8 +136,17 @@ def topo_features(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
 
 
 def _first(x: ak.Array) -> ak.Array:
-    """First entry per event, or NaN where the collection is empty."""
-    return ak.fill_none(ak.firsts(x), np.nan)
+    """
+    First entry per event, or EMPTY_FLOAT where the collection is empty.
+
+    ``extract.py`` uses NaN here, but it only ever evaluates features on rows that already passed
+    its preselection. This producer writes a column for *every* event, and ``cf.SelectEvents`` calls
+    ``raise_if_not_finite`` on its output, so a NaN is a hard error rather than a marker. The
+    sentinel is safe because it is only reachable where ``topo_feat.valid`` is False, and no event
+    with ``valid == False`` may be reweighted -- the emulation falls back to the stored OR2 decision
+    there. Anything that consumes these features must check ``valid`` first.
+    """
+    return ak.fill_none(ak.firsts(x), EMPTY_FLOAT)
 
 
 def l1ht_proxy(events: ak.Array) -> ak.Array:
