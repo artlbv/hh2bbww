@@ -332,6 +332,13 @@ def add_categories_selection(config: od.Config) -> None:
         # adds categories for ABCD background estimation
         add_abcd_categories(config)
         config.x.main_categories = ["sr", "fake"]
+        # adds categories based on bjets
+        # NOTE: the category instances themselves are created by add_bjet_categories below; this is
+        # only the name list that add_categories_production and add_categories_ml build groups from
+        if config.x.signal_tag == "hh":
+            config.x.bjet_categories = ["1b", "2b"]
+        elif config.x.signal_tag == "hhh":
+            config.x.bjet_categories = ["2b", "3b", "4b"]
     elif config.x.lepton_tag == "dl":
         # adds categories based on mll
         add_mll_categories(config)
@@ -402,13 +409,15 @@ def add_categories_production(config: od.Config) -> None:
     )
     logger.info(f"Number of produced category insts: {n_cats} (took {(time() - t0):.3f}s)")
 
-    dycr__nonmixed = config.add_category(
-        name="dycr__nonmixed",
-        id=2349237509,
-        label="dycr (Nonmixed)",
-    )
-    dycr__nonmixed.add_category(config.get_category("dycr__2e"))
-    dycr__nonmixed.add_category(config.get_category("dycr__2mu"))
+    # NOTE: dycr only exists in the DL channel, see add_mll_categories
+    if "dycr" in config.x.main_categories:
+        dycr__nonmixed = config.add_category(
+            name="dycr__nonmixed",
+            id=2349237509,
+            label="dycr (Nonmixed)",
+        )
+        dycr__nonmixed.add_category(config.get_category("dycr__2e"))
+        dycr__nonmixed.add_category(config.get_category("dycr__2mu"))
 
 
 @call_once_on_config()
