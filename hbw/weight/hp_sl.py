@@ -17,9 +17,13 @@ sl_weight_columns = {
     **default_correction_weights,
 }
 
-sl_default = base.derive("sl_default", cls_dict={"weight_columns": sl_weight_columns})
-
-sl_unstitched = base.derive("sl_unstitched", cls_dict={"weight_columns": {
+#: per-dataset normalisation. Useful for single-dataset debugging, because the stitched weight makes
+#: every task depend on cf.MergeSelectionStats over the whole process group.
+sl_unstitched_weight_columns = {
     "dataset_normalization_weight": [],
     **default_correction_weights,
-}})
+}
+
+sl_default = base.derive("sl_default", cls_dict={"weight_columns": sl_weight_columns})
+
+sl_unstitched = base.derive("sl_unstitched", cls_dict={"weight_columns": sl_unstitched_weight_columns})
