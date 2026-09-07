@@ -1418,6 +1418,11 @@ def add_config(
     # add variables
     add_variables(cfg)
 
+    # variables of the TOPO trigger study; only filled by selectors that produce topo_feat
+    if cfg.has_tag("is_sl"):
+        from hbw.config.topo_variables import add_topo_variables
+        add_topo_variables(cfg)
+
     # set some config defaults and groups
     # TODO: it might make sense to completely separate this for SL/DL
     if cfg.has_tag("is_sl"):
