@@ -10,6 +10,7 @@ hbw_sl = create_hbw_analysis(
     "hbw_sl", 3,
     tags={
         "is_sl",
+        "is_hh",
         "is_nonresonant",
         # "custom_signals",
     },
