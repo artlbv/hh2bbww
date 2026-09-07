@@ -17,7 +17,7 @@ makes the three directly comparable.
 """
 
 from hbw.weight.default import base
-from hbw.weight.hp_sl import sl_weight_columns
+from hbw.weight.hp_sl import sl_unstitched_weight_columns, sl_weight_columns
 
 
 sl_topo_none = base.derive("sl_topo_none", cls_dict={"weight_columns": sl_weight_columns})
@@ -33,4 +33,26 @@ sl_topo_or2 = base.derive("sl_topo_or2", cls_dict={"weight_columns": {
 sl_topo_or3 = base.derive("sl_topo_or3", cls_dict={"weight_columns": {
     **sl_weight_columns,
     "topo_trigger_weight": [],
+}})
+
+
+# per-dataset-normalised twins. The stitched normalisation weight makes every histogram task depend
+# on cf.MergeSelectionStats over the whole process group, which is a grid-scale job; these exist so
+# a single dataset can be checked end to end without it.
+sl_topo_none_unstitched = base.derive("sl_topo_none_unstitched", cls_dict={
+    "weight_columns": sl_unstitched_weight_columns,
+})
+
+sl_topo_or2_unstitched = base.derive("sl_topo_or2_unstitched", cls_dict={"weight_columns": {
+    **sl_unstitched_weight_columns,
+    "topo_trigger_weight_or2": [],
+}})
+
+
+# trigger weight only, no normalisation and no correction weights. Not physics -- this exists so the
+# HistProducer plumbing (weight-column lookup, shift aliases) can be exercised on a single dataset
+# without pulling in event_weights, whose stitched_normalization_weight requires
+# cf.MergeSelectionStats over the whole process group.
+sl_topo_or2_only = base.derive("sl_topo_or2_only", cls_dict={"weight_columns": {
+    "topo_trigger_weight_or2": [],
 }})
