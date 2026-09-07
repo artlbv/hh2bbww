@@ -309,6 +309,22 @@ def add_triggers(config: od.Config) -> od.UniqueObjectIndex[Trigger]:
         },
         tags={"di_trigger", "di_mu"},
     )
+    # single muon + HT + b-tag path, part of the reference "OR2" of the TOPO trigger study; only
+    # present from 2024 on, so it must not be registered for earlier campaigns or keep_columns would
+    # ask ReduceEvents for a column that does not exist in the nano files
+    mu_ht_btag = Trigger(
+        name="HLT_Mu12_IsoVVL_PFHT150_PNetBTag0p53",
+        id=103,
+        # NOTE: no legs; the TrigObj filter bits for this path have not been checked, and it is
+        #       currently only used through its path-level decision
+        aux={
+            "channels": ["mu"],
+            "data_stream": "data_mu",
+            # NOTE: the L1 seeds of this path have not been cross-checked against the 2024 menu
+            "L1_seeds": [],
+        },
+        tags={"single_trigger", "single_mu"},
+    )
     single_e = Trigger(
         name="HLT_Ele30_WPTight_Gsf",
         id=201,
@@ -525,6 +541,11 @@ def add_triggers(config: od.Config) -> od.UniqueObjectIndex[Trigger]:
         config.x.triggers = od.UniqueObjectIndex(Trigger, [
             single_e,
             single_mu,
+            *(
+                [mu_ht_btag]
+                if config.campaign.x.year >= 2024
+                else []
+            ),
         ])
     else:
         raise ValueError("Analysis, please set the 'is_dl' or 'is_sl' tag")
