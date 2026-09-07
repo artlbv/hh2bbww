@@ -661,6 +661,9 @@ def configure_hbw_datasets(
                 ["wwz_*", "wzz_*", "zzz_*", "www_*", "ttww_*", "ttwz_*", "ttzz_*", "ttw_*", "ttz_*", "tttt_*"],
                 ["hh_*", "whh_*", "tthh_*", "zhh_*"],
                 ["h_*", "zh_*", "wph_*", "wmh_*", "tth_*", "thq_*", "thw_*", "ttzh_*", "ttwh_*", "bbh_*"],
+                # NOTE: only used by the SL channel; appended at the end on purpose, because the
+                #       list index ends up in the btag_wp_eff_group_{i} tag name
+                ["qcd_*"],
                 #     ["dy_*",
                 #     "hhh_*",
                 #     "w_lnu_*",

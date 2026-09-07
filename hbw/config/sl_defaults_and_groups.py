@@ -8,8 +8,13 @@ from hbw.util import bracket_expansion
 
 
 def default_calibrator(container):
-    # return ["with_b_reg", "fatjet"]
-    return ["ak4", "fatjet", "ele"]
+    # NOTE: keep in sync with hbw.config.defaults_and_groups.default_calibrator; there is no
+    #       calibrator named "fatjet", the AK8 one is called "ak8"
+    default_calibrators = law.config.get_expanded("analysis", "default_calibrators", ())
+    if isinstance(default_calibrators, str):
+        return default_calibrators.split(",")
+    else:
+        return ["ak4", "ak8", "ele", "muo"]
 
 
 def default_selector(container):
@@ -40,7 +45,7 @@ def default_ml_model(cls, container, task_params):
     # NOTE: default_ml_model does not work for the MLTraining task
     if hasattr(cls, "ml_model"):
         # TODO: we might want to distinguish between multiple default ML models (sl vs dl)
-        default_ml_model = "dense_default"
+        default_ml_model = "sl_22post"
 
     # check if task is using an inference model
     # if that is the case, use the default ml_model set in the inference model
@@ -116,12 +121,13 @@ def set_sl_config_defaults_and_groups(config_inst):
     config_inst.x.default_reducer = "default"
     config_inst.x.ml_inputs_producer = ml_inputs_producer(config_inst)
     config_inst.x.default_producer = default_producers
-    config_inst.x.default_hist_producer = "default"
-    # config_inst.x.default_hist_producer = "with_trigger_weight"
+    # NOTE: the "default" hist producer lives in hbw.weight.hp_dih and requires trigger_weight and
+    #       dy_correction_weight, neither of which is written by an SL producer
+    config_inst.x.default_hist_producer = "sl_default"
     config_inst.x.default_ml_model = default_ml_model
-    config_inst.x.default_inference_model = "default" if year == 2017 else "sl_22"
-    config_inst.x.default_categories = ["incl", "sr", "dycr", "ttcr"]
-    config_inst.x.default_variables = ["jet0_pt", "mll", "n_jet", "ptll", "lepton0_pt", "lepton1_pt"]
+    config_inst.x.default_inference_model = "default" if year == 2017 else "sl"
+    config_inst.x.default_categories = ["incl", "sr__1mu", "sr__1e"]
+    config_inst.x.default_variables = ["jet0_pt", "n_jet", "ht", "lepton0_pt"]
 
     # general_settings default needs to be tuple (or dict) to be resolved correctly
     config_inst.x.default_general_settings = ("data_mc_plots",)

@@ -7,8 +7,11 @@ Selection modules for HH -> bbWW(qqlnu).
 from collections import defaultdict
 from typing import Tuple
 
+import law
+
 from columnflow.util import maybe_import
 from columnflow.selection import Selector, SelectionResult, selector
+from columnflow.selection.cms.btag import fill_btag_wp_count_hists
 
 from hbw.selection.common import (
     masked_sorted_indices, pre_selection, get_weights_and_no_sel_mask, post_selection, configure_selector,
@@ -203,6 +206,16 @@ def sl_lepton_selection_init(self: Selector) -> None:
             "e": ["Ele30_WPTight_Gsf"],
             "mu": ["IsoMu24"],
         })
+    elif year in (2024, 2025, 2026):
+        # same single lepton paths as 2023; these are the ones add_triggers registers for run 3
+        # TODO: this ladder should be retired in favour of add_triggers, see the "use this in SL
+        #       aswell" note in hbw/config/trigger.py
+        self.config_inst.x.mu_pt = self.config_inst.x("mu_pt", 25)
+        self.config_inst.x.ele_pt = self.config_inst.x("ele_pt", 31)
+        self.config_inst.x.trigger = self.config_inst.x("trigger", {
+            "e": ["Ele30_WPTight_Gsf"],
+            "mu": ["IsoMu24"],
+        })
     else:
         raise Exception(f"Single lepton trigger not implemented for year {year}")
 
@@ -223,7 +236,7 @@ def sl_lepton_selection_init(self: Selector) -> None:
     jet_pt=None,
     n_jet=None,
     n_btag=None,
-    version=1,
+    version=law.config.get_expanded("analysis", "sl1_version", 2),
 )
 def sl1(
     self: Selector,
@@ -265,17 +278,30 @@ def sl1(
         (jet_step & bjet_step) | results.steps.HbbJet
     )
 
-    # combined event selection after all steps except b-jet selection
-    results.steps["all_but_bjet"] = (
+    # combined event selection after all steps except trigger and b-jet selection
+    results.steps["all_but_trigger_and_bjet"] = (
         results.steps.cleanup &
         (jet_step | results.steps.HbbJet_no_bjet) &
         results.steps.ll_lowmass_veto &
         results.steps.ll_zmass_veto &
         results.steps.DileptonVeto &
         results.steps.Lepton &
-        results.steps.VetoTau &
+        results.steps.VetoTau
+    )
+
+    # combined event selection after all steps except b-jet selection
+    results.steps["all_but_bjet"] = (
+        results.steps.all_but_trigger_and_bjet &
         results.steps.Trigger &
         results.steps.TriggerAndLep
+    )
+
+    # combined event selection after all steps except trigger
+    # NOTE: needed by the "triggersf" reducer, which measures trigger efficiencies against an
+    #       orthogonal reference selection
+    results.steps["all_but_trigger"] = (
+        results.steps.all_but_trigger_and_bjet &
+        ((jet_step & bjet_step) | results.steps.HbbJet)
     )
 
     # combined event selection after all steps
@@ -290,6 +316,12 @@ def sl1(
 
     # build categories
     events, results = self[post_selection](events, results, stats, hists, **kwargs)
+
+    # fill btagging efficiency histograms (in-place, so no return value)
+    # ! note that this uses selected jets only of selected events with the full "event_sel", so selecting a subset
+    # of selection-steps later on will not affect these histograms
+    if self.dataset_inst.is_mc and self.has_dep(fill_btag_wp_count_hists):
+        self[fill_btag_wp_count_hists](events, results.steps.all_but_bjet, results.objects.Jet.Jet, hists, **kwargs)
 
     return events, results
 
@@ -331,6 +363,14 @@ def sl1_init(self: Selector) -> None:
             r"or $N_{H \rightarrow bb}^{AK8} \geq 1$"
         ),
     })
+
+    if hasattr(self, "dataset_inst") and self.dataset_inst.is_mc:
+        self.uses |= {
+            fill_btag_wp_count_hists,
+        }
+        self.produces |= {
+            fill_btag_wp_count_hists,
+        }
 
 
 sl1_no_btag = sl1.derive("sl1_no_btag", cls_dict={"n_btag": 0, "b_tagger": "deepjet"})
