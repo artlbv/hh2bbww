@@ -18,6 +18,7 @@ from hbw.selection.common import (
 )
 from hbw.selection.lepton import lepton_definition
 from hbw.selection.jet import jet_selection, sl_boosted_jet_selection, vbf_jet_selection
+from hbw.production.topo_trigger import topo_features
 from hbw.util import ak_any
 
 np = maybe_import("numpy")
@@ -236,6 +237,9 @@ def sl_lepton_selection_init(self: Selector) -> None:
     jet_pt=None,
     n_jet=None,
     n_btag=None,
+    # produce the offline feature vector of the TOPO trigger emulation; off by default, switched on
+    # by the derived selectors in hbw.selection.topo
+    produce_topo_features=False,
     version=law.config.get_expanded("analysis", "sl1_version", 2),
 )
 def sl1(
@@ -323,6 +327,11 @@ def sl1(
     if self.dataset_inst.is_mc and self.has_dep(fill_btag_wp_count_hists):
         self[fill_btag_wp_count_hists](events, results.steps.all_but_bjet, results.objects.Jet.Jet, hists, **kwargs)
 
+    # offline features for the TOPO trigger emulation; must run here rather than in ProduceColumns
+    # because it needs the *raw* jet collection, which does not survive cf.ReduceEvents
+    if self.has_dep(topo_features):
+        events = self[topo_features](events, **kwargs)
+
     return events, results
 
 
@@ -371,6 +380,10 @@ def sl1_init(self: Selector) -> None:
         self.produces |= {
             fill_btag_wp_count_hists,
         }
+
+    if self.produce_topo_features:
+        self.uses |= {topo_features}
+        self.produces |= {topo_features}
 
 
 sl1_no_btag = sl1.derive("sl1_no_btag", cls_dict={"n_btag": 0, "b_tagger": "deepjet"})
