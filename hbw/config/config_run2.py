@@ -1056,6 +1056,14 @@ def add_config(
 
     cfg.x.external_files = DotDict()
 
+    # base directory of the hh2bbww-specific external files (jsons, models, trigger SFs) that are
+    # not part of the central CAT metadata structure. defaults to the DESY NAF location, but can be
+    # repointed to a mirror via the "hbw_external_base" option in the [analysis] section of the law
+    # config, which is required at sites where /data/dust is not mounted
+    hbw_ext_base = law.config.get_expanded(
+        "analysis", "hbw_external_base", "/data/dust/user/letzerba/public/hh2bbww",
+    ).rstrip("/")
+
     # helper
     def add_external(name, value):
         if isinstance(value, dict):
@@ -1149,7 +1157,7 @@ def add_config(
     else:
         # add_external("btag_sf_corr", (cat_info.get_file("btv", "btagging_preliminary.json.gz"), "v1"))
         # add_external("btag_wp_sf_corr", ("/data/dust/user/matthiej/mttbar/mtt/config/run3/btagging_preliminary_merged.json.gz", "v1"))  # noqa: E501
-        add_external("btag_wp_sf_corr", (f"/data/dust/user/letzerba/public/hh2bbww/jsons/merged_btagging{year2}.json.gz", "v2"))  # noqa: E501
+        add_external("btag_wp_sf_corr", (f"{hbw_ext_base}/jsons/merged_btagging{year2}.json.gz", "v2"))
 
     # updated jet id
     add_external("jet_id", (cat_info.get_file("jme", "jetid.json.gz"), "v1"))
@@ -1163,14 +1171,14 @@ def add_config(
     })
     # jec file for regressed jets
     if year >= 2024:
-        add_external("regjet_jerc", (f"/data/dust/user/letzerba/public/hh2bbww/jsons/regJet_jerc{year2}.json.gz", "v1"))
+        add_external("regjet_jerc", (f"{hbw_ext_base}/jsons/regJet_jerc{year2}.json.gz", "v1"))
 
     # muon scale factors
     add_external("muon_sf", (cat_info.get_file("muo", "muon_Z.json.gz"), "v2"))
     add_external("muon_low_pt_sf", (cat_info.get_file("muo", "muon_JPsi.json.gz"), "v1"))
     add_external("muon_sr", (cat_info.get_file("muo", "muon_scalesmearing.json.gz"), "v1"))
     add_external("muon_sr_tools", Ext(
-        "/data/dust/user/letzerba/public/hh2bbww/jsons/muonscarekit-1c7426b5.tar.gz",
+        f"{hbw_ext_base}/jsons/muonscarekit-1c7426b5.tar.gz",
         subpaths="muonscarekit-master/scripts/MuonScaRe.py",
         version="v1",
     ))
@@ -1195,7 +1203,7 @@ def add_config(
         add_external("trigger_sf_mm", (f"{trigger_sf_path}/sf_mm_trg_lepton0_pt-trg_lepton1_pt-trig_idsV6.json.gz", "v6"))  # noqa: E501
         add_external("trigger_sf_mixed", (f"{trigger_sf_path}/sf_mixed_trg_lepton0_pt-trg_lepton1_pt-trig_idsV6.json.gz", "v6"))  # noqa: E501
     elif year >= 2024:
-        trigger_sf_path = "/data/dust/user/letzerba/public/hh2bbww/triggersf"
+        trigger_sf_path = f"{hbw_ext_base}/triggersf"
 
         add_external("trigger_sf_ee", (f"{trigger_sf_path}/sf_ee_trg_lepton0_pt-trg_lepton1_pt-trig_idsV1.json.gz", "v1"))  # noqa: E501
         add_external("trigger_sf_mm", (f"{trigger_sf_path}/sf_mm_trg_lepton0_pt-trg_lepton1_pt-trig_idsV1.json.gz", "v1"))  # noqa: E501
@@ -1208,7 +1216,7 @@ def add_config(
     add_triggers(cfg)
 
     # files for NLO V+Jets reweighting transformer models
-    model_path = "/data/dust/user/letzerba/public/hh2bbww/models"
+    model_path = f"{hbw_ext_base}/models"
     add_external("nlo_reweight_model", (f"{model_path}/fineTunedEnsemble_64.onnx", "v0"))
 
     # V+jets reweighting (derived for 13 TeV, custom json converted from ROOT, not centrally produced)
@@ -1455,7 +1463,7 @@ def add_config(
                 nonlocal _splitter
                 if _splitter is None:
                     from columnflow.util import load_correction_set
-                    splitter_path = "/data/dust/user/letzerba/public/hh2bbww/jsons/mc_event_splitter.json.gz"
+                    splitter_path = f"{hbw_ext_base}/jsons/mc_event_splitter.json.gz"
                     _splitter = load_correction_set(splitter_path)["mc_event_splitter"]
                     logger.info_once(f"MC splitting is enabled for {cfg.campaign.x.year} (using {splitter_path}).")
                 return _splitter.evaluate(events.event) == cfg.campaign.x.year
