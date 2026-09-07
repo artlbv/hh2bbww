@@ -1402,7 +1402,9 @@ def add_config(
         ColumnCollection.ALL_FROM_SELECTOR,
         skip_column("cutflow.*"),
     } | {
-        "HLT.{trg.hlt_field}" for trg in cfg.get_aux("triggers", [])
+        # NOTE: this was missing its f prefix, so it used to add the literal string
+        #       "HLT.{trg.hlt_field}" and no registered trigger's column was ever kept through it
+        f"HLT.{trg.hlt_field}" for trg in cfg.get_aux("triggers", [])
     }
 
     # Version of required tasks
