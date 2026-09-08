@@ -320,14 +320,17 @@ def add_triggers(config: od.Config) -> od.UniqueObjectIndex[Trigger]:
         aux={
             "channels": ["mu"],
             "data_stream": "data_mu",
-            # NOTE: the L1 seeds of this path have not been cross-checked against the 2024 menu.
-            #       This is not inert. trigger_ids is filled from `fired & ak_any(L1_seeds)`
-            #       (hbw/selection/trigger.py), and hbw.util.ak_any([]) returns False, so with
-            #       an empty list this trigger's id is never added to trigger_ids -- while its
-            #       trigger_data.<name>.fired bit still fires. Harmless today because SL does
-            #       not route through hbw_trigger_selection and the TOPO study reads the
-            #       path-level HLT bit directly, but this must be filled in before SL is ported
-            #       onto add_triggers, or the OR2 second leg goes silently missing.
+            # NOTE: deliberately empty, and it should stay that way. The HLT path already
+            #       requires its own L1 seeds, and this path is not seeded by prescaled L1
+            #       seeds -- which is the reason some of the DL triggers enumerate theirs
+            #       explicitly. The TOPO study uses the path-level decision, which is also how
+            #       the trigger-efficiency estimator defines its target.
+            #       Caveat if SL is ever ported onto add_triggers: trigger_ids is filled from
+            #       `fired & ak_any(L1_seeds)` (hbw/selection/trigger.py) and
+            #       hbw.util.ak_any([]) returns False, so an empty list currently means
+            #       "never fires" rather than "no L1 requirement", and this id would silently
+            #       never be set. The fix belongs there -- an empty seed list should not gate
+            #       the decision -- not in inventing seeds here.
             "L1_seeds": [],
         },
         tags={"single_trigger", "single_mu"},
