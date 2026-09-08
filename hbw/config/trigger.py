@@ -320,7 +320,14 @@ def add_triggers(config: od.Config) -> od.UniqueObjectIndex[Trigger]:
         aux={
             "channels": ["mu"],
             "data_stream": "data_mu",
-            # NOTE: the L1 seeds of this path have not been cross-checked against the 2024 menu
+            # NOTE: the L1 seeds of this path have not been cross-checked against the 2024 menu.
+            #       This is not inert. trigger_ids is filled from `fired & ak_any(L1_seeds)`
+            #       (hbw/selection/trigger.py), and hbw.util.ak_any([]) returns False, so with
+            #       an empty list this trigger's id is never added to trigger_ids -- while its
+            #       trigger_data.<name>.fired bit still fires. Harmless today because SL does
+            #       not route through hbw_trigger_selection and the TOPO study reads the
+            #       path-level HLT bit directly, but this must be filled in before SL is ported
+            #       onto add_triggers, or the OR2 second leg goes silently missing.
             "L1_seeds": [],
         },
         tags={"single_trigger", "single_mu"},
