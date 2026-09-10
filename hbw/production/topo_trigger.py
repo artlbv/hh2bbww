@@ -126,9 +126,9 @@ def topo_features(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     #     its own a licence to evaluate the model. The reference preselection is
     #     ``n_mu >= 1 & n_jet >= 3 & n_btag_pnet >= 2 & n_tight_electrons == 0``; only the first two
     #     terms are checked here, because the other two are not properties of the feature vector.
-    #     The b-tag term in particular removes a large fraction of the events ``valid`` accepts, so
-    #     treating ``valid`` as "in support" extrapolates the model over a substantial part of what
-    #     it selects, and does so silently.
+    #     Measured on reduced 2024 signal, ``valid`` holds for 57.5% of events while the full
+    #     preselection holds for 34.4% -- so treating ``valid`` as "in support" would extrapolate
+    #     the model over 40% of the events it selects, silently.
     #
     #     Any consumer that feeds these columns to a model must therefore AND in the missing terms;
     #     :py:func:`topo_or3_weights` does this via its ``min_n_btag_pnet`` attribute and writes the
