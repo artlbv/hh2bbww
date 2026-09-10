@@ -1422,6 +1422,10 @@ def add_config(
     if cfg.has_tag("is_sl"):
         from hbw.config.topo_variables import add_topo_variables
         add_topo_variables(cfg)
+        # kinematic classifier inputs for the S/B study. Built from Jet/Muon/PuppiMET
+        # via callable expressions, so they need no producer and no re-reduction.
+        from hbw.config.topo_an_variables import add_topo_an_variables
+        add_topo_an_variables(cfg)
 
     # set some config defaults and groups
     # TODO: it might make sense to completely separate this for SL/DL
