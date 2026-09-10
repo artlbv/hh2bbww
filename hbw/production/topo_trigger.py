@@ -213,3 +213,34 @@ def topo_or2_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
         ak.values_astype(d_or2, np.float32),
     )
     return events
+
+
+#: the single-muon reference leg on its own. This is the trigger the analysis *already* has, so it
+#: is the baseline the TOPO path has to beat: OR2/IsoMu24 is the acceptance the second leg buys,
+#: whereas OR2/none only says how far OR2 is from the ceiling.
+ISOMU_PATH = "IsoMu24"
+
+
+@producer(
+    uses={f"HLT.{ISOMU_PATH}"},
+    produces={"topo_isomu24", "topo_trigger_weight_isomu24"},
+    version=0,
+)
+def topo_isomu24_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
+    """
+    The single-muon-only arm: ``w = d_IsoMu24``, the stored decision of ``HLT_IsoMu24``.
+
+    Like :py:func:`topo_or2_weights` this needs no emulation -- the bit is stored in Summer24
+    NanoAODv15 -- and carries no scale factor yet, so it is the *uncorrected* IsoMu24 baseline.
+    Its purpose is the OR2-vs-IsoMu24 comparison: the gain from adding
+    ``Mu12_IsoVVL_PFHT150_PNetBTag0p53`` to the existing single-muon path.
+    """
+    d_isomu = events.HLT[ISOMU_PATH]
+
+    events = set_ak_column(events, "topo_isomu24", d_isomu)
+    events = set_ak_column(
+        events,
+        "topo_trigger_weight_isomu24",
+        ak.values_astype(d_isomu, np.float32),
+    )
+    return events

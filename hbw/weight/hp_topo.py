@@ -56,3 +56,13 @@ sl_topo_or2_unstitched = base.derive("sl_topo_or2_unstitched", cls_dict={"weight
 sl_topo_or2_only = base.derive("sl_topo_or2_only", cls_dict={"weight_columns": {
     "topo_trigger_weight_or2": [],
 }})
+
+
+# the single-muon baseline: what the analysis already triggers on. OR2/IsoMu24 is the acceptance
+# the second leg (Mu12_IsoVVL_PFHT150_PNetBTag0p53) actually buys on top of the existing path.
+# NB OR2 contains no TOPO leg at all -- TOPO enters only through the OR3 residual.
+# OR2/none only measures the distance to the no-trigger ceiling.
+sl_topo_isomu24 = base.derive("sl_topo_isomu24", cls_dict={"weight_columns": {
+    **sl_weight_columns,
+    "topo_trigger_weight_isomu24": [],
+}})
