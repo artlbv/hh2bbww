@@ -32,7 +32,7 @@ from __future__ import annotations
 import law
 
 from columnflow.production import Producer, producer
-from columnflow.util import maybe_import
+from columnflow.util import maybe_import, dev_sandbox
 from columnflow.columnar_util import EMPTY_FLOAT, set_ak_column, optional_column as optional
 
 np = maybe_import("numpy")
@@ -120,7 +120,24 @@ def topo_features(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
 
     # --- training support. The estimator was never fit outside its own preselection, so events
     #     failing this must not be reweighted; the emulation falls back to the stored OR2 decision
-    #     there and reports the fraction. ---
+    #     there and reports the fraction.
+    #
+    #     CAUTION -- ``valid`` is WEAKER than the estimator's training preselection, and is not on
+    #     its own a licence to evaluate the model. The reference preselection is
+    #     ``n_mu >= 1 & n_jet >= 3 & n_btag_pnet >= 2 & n_tight_electrons == 0``; only the first two
+    #     terms are checked here, because the other two are not properties of the feature vector.
+    #     The b-tag term in particular removes a large fraction of the events ``valid`` accepts, so
+    #     treating ``valid`` as "in support" extrapolates the model over a substantial part of what
+    #     it selects, and does so silently.
+    #
+    #     Any consumer that feeds these columns to a model must therefore AND in the missing terms;
+    #     :py:func:`topo_or3_weights` does this via its ``min_n_btag_pnet`` attribute and writes the
+    #     result as ``topo_in_support``. Prefer that column over re-deriving the mask.
+    #
+    #     This matters more than it looks because the sentinel below is EMPTY_FLOAT, i.e. finite:
+    #     nothing NaN-based will catch it, and XGBoost will read it as a real, very negative
+    #     feature value rather than as missing. Plotting the columns is unaffected -- undefined
+    #     events land in underflow and the fraction stays readable. ---
     events = set_ak_column(
         events,
         "topo_feat.valid",
@@ -244,3 +261,203 @@ def topo_isomu24_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array
         ak.values_astype(d_isomu, np.float32),
     )
     return events
+
+
+#: names of the estimators carried in the exported bundle, in the order they are reported.
+#: ``isomu24``, ``mu12`` and ``or2`` all have stored truth in Summer24 NanoAODv15 and are emulated
+#: here ONLY so the emulation can be checked against that truth -- they are the closure test, not
+#: an input to any weight. Only ``topo_res`` is load-bearing, because TOPO is the one path that
+#: does not exist in the 2024 menu.
+TOPO_ESTIMATORS = ("isomu24", "mu12", "or2", "topo_res")
+
+#: the estimator whose output enters the OR3 weight.
+TOPO_RESIDUAL_ESTIMATOR = "topo_res"
+
+
+@producer(
+    uses={topo_or2_weights, topo_isomu24_weights} | {f"topo_feat.{f}" for f in FEATURE_ORDER} | {
+        "topo_feat.valid", "topo_feat.n_btag_pnet",
+    },
+    produces={topo_or2_weights, topo_isomu24_weights, "topo_trigger_weight", "topo_in_support"} | {
+        f"topo_eff_{n}" for n in TOPO_ESTIMATORS
+    } | {
+        f"topo_eff_{n}_std" for n in TOPO_ESTIMATORS
+    },
+    sandbox=dev_sandbox("bash::$HBW_BASE/sandboxes/venv_topo.sh"),
+    mc_only=True,
+    #: minimum number of PNet b-tags. NOT cosmetic: the estimator's training preselection is
+    #: ``n_mu>=1 & n_jet>=3 & n_btag_pnet>=2 & n_ele_tight==0`` while ``topo_feat.valid`` is only
+    #: the first two terms, so ``valid`` alone would extrapolate the model outside its support.
+    min_n_btag_pnet=2,
+    version=0,
+)
+def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
+    """
+    The OR3 arm: the stored OR2 decision plus the emulated TOPO residual.
+
+    .. code-block:: text
+
+        w_OR3 = d_OR2 * SF_OR2  +  (1 - d_OR2) * eps_res(c)
+
+    with ``SF_OR2 == 1`` for now (see :py:func:`topo_or2_weights`) and ``eps_res`` the calibrated
+    ensemble mean for the residual target ``TOPO & ~OR2``.
+
+    Two choices that look like details and are not:
+
+    * **The residual target, not the marginal.** Fitting ``TOPO`` alone and combining by
+      inclusion-exclusion would assume leg factorisation, which the trigger-efficiency study
+      measures and finds does not hold -- TOPO is heavily correlated with the muon leg. Fitting
+      ``TOPO & ~OR2`` assumes nothing.
+    * **A probability weight, not a decision.** ``w = eps``, not ``w = 1{eps > 0.5}``. A threshold
+      is simply biased (``E[1{eps>0.5}] != E[eps]``) and a Bernoulli draw throws away precision for
+      nothing; the probability weight is unbiased in yield and correct in shape.
+
+    Outside the training support the weight falls back to the stored ``d_OR2``, i.e. the TOPO leg
+    is credited with nothing rather than with an extrapolation.
+
+    Besides the weight this writes ``topo_eff_<name>`` and ``topo_eff_<name>_std`` for every
+    estimator in the bundle. Three of the four have a stored decision in Summer24 NanoAODv15 and
+    are emulated *only* so the emulation can be checked against it: ``topo_eff_isomu24`` pairs with
+    ``topo_isomu24``, ``topo_eff_or2`` with ``topo_or2``, and ``topo_eff_mu12`` with the stored HLT
+    bit. Only ``topo_res`` is load-bearing, TOPO being the one path absent from the 2024 menu.
+    """
+    events = self[topo_or2_weights](events, **kwargs)
+    # the stored IsoMu24 decision travels alongside, so a single pass writes each emulated
+    # efficiency next to its own truth column on the same events -- the closure test is then
+    # reproducible from this output alone, with no second pass and no join.
+    events = self[topo_isomu24_weights](events, **kwargs)
+
+    feat = events.topo_feat
+    in_support = np.asarray(
+        ak.to_numpy(feat.valid & (feat.n_btag_pnet >= self.min_n_btag_pnet)),
+        dtype=bool,
+    )
+    events = set_ak_column(events, "topo_in_support", in_support)
+
+    # the feature matrix is built for in-support rows ONLY. Elsewhere the columns carry the
+    # EMPTY_FLOAT sentinel, which is finite and would therefore NOT be treated as missing by
+    # XGBoost -- it would be read as a real, very negative feature value.
+    x = np.column_stack([
+        np.asarray(ak.to_numpy(feat[f]), dtype=np.float64)[in_support] for f in FEATURE_ORDER
+    ]) if in_support.any() else np.zeros((0, len(FEATURE_ORDER)))
+
+    n_out = int((~in_support).sum())
+    if n_out:
+        logger.info(
+            f"{n_out} of {len(in_support)} events ({n_out / len(in_support) * 100:.2f}%) are "
+            f"outside the estimator's training support; falling back to w = d_OR2 there",
+        )
+
+    for name in TOPO_ESTIMATORS:
+        mean = np.zeros(len(in_support), dtype=np.float32)
+        std = np.zeros(len(in_support), dtype=np.float32)
+        if len(x):
+            m, s = self.topo_ensemble(name, x)
+            mean[in_support] = m
+            std[in_support] = s
+        events = set_ak_column(events, f"topo_eff_{name}", mean)
+        events = set_ak_column(events, f"topo_eff_{name}_std", std)
+
+    d_or2 = np.asarray(ak.to_numpy(events.topo_or2), dtype=np.float64)
+    eff_res = np.asarray(ak.to_numpy(events[f"topo_eff_{TOPO_RESIDUAL_ESTIMATOR}"]), dtype=np.float64)
+    w = d_or2 + (1.0 - d_or2) * eff_res
+    events = set_ak_column(events, "topo_trigger_weight", w.astype(np.float32))
+
+    return events
+
+
+@topo_or3_weights.requires
+def topo_or3_weights_requires(self: Producer, task: law.Task, reqs: dict, **kwargs) -> None:
+    if "external_files" in reqs:
+        return
+
+    from columnflow.tasks.external import BundleExternalFiles
+    reqs["external_files"] = BundleExternalFiles.req(task)
+
+
+@topo_or3_weights.setup
+def topo_or3_weights_setup(self: Producer, reqs: dict, **kwargs) -> None:
+    """
+    Load the exported ensemble bundle and build one xgboost Booster per member.
+
+    The evaluation below reproduces ``nd_eff._train_one``'s closure BIT-FOR-BIT, which was
+    measured, not assumed. Three details each worth ~1e-7 if got wrong:
+
+    1. the ``eps`` clip is applied to the RAW booster probability, BEFORE the logit
+       (``nd_eff.py:34-36``);
+    2. the logit stays in **float32** -- xgboost predicts float32 and the reference implementation
+       hands that array straight to sklearn; computing it in float64 moves the result by 2.2e-7;
+    3. the Platt fold is then done in **float64** with ``scipy.special.expit``. Under NumPy 2's
+       weak-scalar promotion ``a * z32 + b`` with Python floats stays float32 (worth 7.0e-8), so
+       the cast must be explicit, and ``1/(1+exp(-x))`` differs from ``expit`` by one ulp because
+       ``LogisticRegression.predict_proba`` uses the latter.
+    """
+    import gzip
+    import json
+
+    import xgboost as xgb
+    from scipy.special import expit
+
+    path = reqs["external_files"].files.topo_ensemble.abspath
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        bundle = json.load(f)
+
+    # the bundle ships the feature order it was fitted on; disagreeing with it is a hard failure,
+    # because a silently reordered feature vector produces plausible numbers and no symptom.
+    shipped = tuple(bundle["feature_order"])
+    if shipped != FEATURE_ORDER:
+        raise ValueError(
+            f"topo ensemble was fitted on features {shipped} but this producer builds "
+            f"{FEATURE_ORDER}; re-export the model or fix FEATURE_ORDER",
+        )
+    missing = set(TOPO_ESTIMATORS) - set(bundle["estimators"])
+    if missing:
+        raise ValueError(f"topo ensemble bundle {path} is missing estimators {sorted(missing)}")
+
+    self.topo_eps = float(bundle["eps"])
+    self.topo_meta = bundle["provenance"]
+    self.topo_members = {}
+    for name in TOPO_ESTIMATORS:
+        spec = bundle["estimators"][name]
+        self.topo_members[name] = (
+            list(map(int, spec["features"])),
+            [
+                (
+                    xgb.Booster(model_file=bytearray(m["booster"], "utf-8")),
+                    float(m["platt_a"]),
+                    float(m["platt_b"]),
+                )
+                for m in spec["members"]
+            ],
+        )
+
+    logger.info(
+        f"loaded TOPO ensemble from {path}: "
+        f"{', '.join(f'{n}(K={len(v[1])})' for n, v in self.topo_members.items())}; "
+        f"provenance {self.topo_meta}",
+    )
+
+    eps = self.topo_eps
+
+    def calibrate(booster, a, b, dm):
+        """One member: the booster probability, clipped, logit-ed, Platt-folded."""
+        p = booster.predict(dm)                       # float32, as the reference path has it
+        p = np.clip(p, eps, 1.0 - eps)                # clip the RAW probability, before the logit
+        z = np.log(p / (1.0 - p)).astype(np.float64)  # float32 logit, then explicit widening
+        return expit(a * z + b)
+
+    def topo_ensemble(name: str, x: np.ndarray):
+        """(mean, std) over the K calibrated members, on the rows given."""
+        features, members = self.topo_members[name]
+        dm = xgb.DMatrix(np.ascontiguousarray(x[:, features]))
+        preds = np.column_stack([calibrate(booster, a, b, dm) for booster, a, b in members])
+        return preds.mean(1), preds.std(1)
+
+    self.topo_ensemble = topo_ensemble
+
+
+@topo_or3_weights.teardown
+def topo_or3_weights_teardown(self: Producer, **kwargs) -> None:
+    for attr in ("topo_members", "topo_ensemble", "topo_eps", "topo_meta"):
+        if hasattr(self, attr):
+            delattr(self, attr)
