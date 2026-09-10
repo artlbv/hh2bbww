@@ -36,6 +36,18 @@ def add_topo_variables(config: od.Config) -> None:
         unit="GeV",
         x_title=r"leading isolated muon $p_{T}$",
     )
+    # Uniform-width companion to topo_mu_pt. TOPO_PT_EDGES is the reference binning and is kept
+    # as the reference, but its widths jump 5 -> 2 -> 5 GeV around the turn-on, and since the
+    # y-axis is *entries* (not entries/GeV) that produces a sawtooth at 15--30 GeV which reads
+    # as structure in the spectrum and is not. 2 GeV throughout, over the turn-on region.
+    config.add_variable(
+        name="topo_mu_pt_uni",
+        expression="topo_feat.mu_pt",
+        null_value=EMPTY_FLOAT,
+        binning=(20, 10.0, 50.0),
+        unit="GeV",
+        x_title=r"leading isolated muon $p_{T}$",
+    )
     config.add_variable(
         name="topo_mu_eta",
         expression="topo_feat.mu_eta",
