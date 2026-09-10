@@ -115,7 +115,7 @@ def create_hbw_analysis(
 
                 hbw_campaign_inst = cpn_task.output()["hbw_campaign_inst"].load(formatter="pickle")
                 # TODO: here would be the best place to modify the campaign processes
-                return add_config(
+                cfg = add_config(
                     analysis_inst,
                     hbw_campaign_inst,
                     config_name=final_config_name,
@@ -123,6 +123,20 @@ def create_hbw_analysis(
                     limit_dataset_files=limit_dataset_files,
                     **kwargs,
                 )
+                # TOPO trigger sensitivity study: requiring b-tag WP MC efficiencies drags the
+                # entire btag_wp_eff_group through Calibrate/Select -- 57 datasets for the
+                # signal's group 6, 6 for tt's group 3. On c24v15 that group includes
+                # ttbb_{dl,sl,fh}, which are not part of this study's 50-dataset cocktail at
+                # all, so cf.ProduceColumns(producer=event_weights) can never become runnable
+                # without reducing datasets we do not want.
+                # The OR2-vs-IsoMu24-vs-none comparison is a ratio over one and the same event
+                # set, so the per-event b-tag SF cancels exactly and the trigger conclusions are
+                # unaffected. Absolute yields lose the b-tag SF correction -- state that when
+                # quoting them, especially in the 2b category where it is largest.
+                # Applied to ALL configs (was: limited only) so that c24v15 matches l24v15 and
+                # the full-statistics numbers are directly comparable to the existing ones.
+                cfg.add_tag("skip_btag_weights")
+                return cfg
             return analysis_factory
 
         analysis_inst.configs.add_lazy_factory(
