@@ -166,6 +166,20 @@ class TopoEmulationClosure(
     def config_inst(self):
         return self.config_insts[0]
 
+    def store_parts(self) -> law.util.InsertableDict:
+        """
+        Put the categories in the path.
+
+        Without this, running the same datasets in ``incl`` and then in ``1mu`` writes to one
+        location: the base class puts the datasets in the path but not the categories, so the
+        second run finds the first run's output already present, declares itself complete, and
+        hands back numbers for the wrong population. It fails silently and in the direction that
+        looks plausible, which is the worst kind.
+        """
+        parts = super().store_parts()
+        parts.insert_before("version", "categories", f"cats_{self.categories_repr}")
+        return parts
+
     def output(self):
         return {
             "json": self.target("topo_closure.json"),
@@ -409,8 +423,22 @@ class TopoEmulationClosure(
         lines.append("not a closure -- it should sit at the size of the or2 residual above, and a")
         lines.append("large value means the construction is wrong rather than the transport.")
         lines.append("")
+        lines.append("'gain' is conditional on being in support. 'gain*supp' dilutes it by the")
+        lines.append("in-support fraction and is the ceiling on what OR3 can add to the WHOLE")
+        lines.append("sample, because out-of-support events fall back to the stored OR2 decision")
+        lines.append("and are credited with nothing. READ THE TWO TOGETHER. The support cut is a")
+        lines.append("two-b-tag requirement inherited from the estimator's measurement")
+        lines.append("preselection; it is NOT a property of the trigger, whose only requirements")
+        lines.append("are an L1 seed, a 12 GeV muon leg, online HT > 50 GeV and a discriminant")
+        lines.append("score. So an out-of-support event CAN fire it, and crediting it with nothing")
+        lines.append("under-counts the trigger -- by more on the b-poor samples than on the b-rich")
+        lines.append("ones. Since signal is b-rich and QCD is not, that asymmetry flatters any")
+        lines.append("S/sqrt(B) built on these weights, and the size of the flattery is the gap")
+        lines.append("between the two gain columns.")
+        lines.append("")
         head2 = (f"{'dataset':<40s} {'OR2 stored':>10s} {'eps_res':>8s} {'eps_TOPO':>9s} "
-                 f"{'OR3 built':>10s} {'OR3 fit':>8s} {'built-fit':>10s} {'gain':>8s} {'err':>7s}")
+                 f"{'OR3 built':>10s} {'OR3 fit':>8s} {'built-fit':>10s} {'gain':>8s} {'err':>7s} "
+                 f"{'supp':>6s} {'gain*supp':>10s}")
         lines.append(head2)
         lines.append("-" * len(head2))
         for dataset in datasets:
@@ -423,7 +451,9 @@ class TopoEmulationClosure(
                 f"{100 * float(est['topo_res']['eff_emulated']):>7.2f}% "
                 f"{100 * float(est['topo']['eff_emulated']):>8.2f}% "
                 f"{built:>9.2f}% {fit:>7.2f}% {built - fit:>+9.3f} "
-                f"{100 * float(r['gain']):>+7.3f} {100 * float(r['gain_err']):>6.3f}",
+                f"{100 * float(r['gain']):>+7.3f} {100 * float(r['gain_err']):>6.3f} "
+                f"{100 * float(r['in_support_frac']):>5.1f}% "
+                f"{100 * float(r['gain']) * float(r['in_support_frac']):>+9.3f}",
             )
 
         lines.append("")
