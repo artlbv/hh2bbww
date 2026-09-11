@@ -271,8 +271,19 @@ class TopoEmulationClosure(
                     "pull": np.full_like(np.asarray(s_emu, dtype=float), np.nan),
                     "model_std": np.asarray(s_std) / safe_n,
                 }
-            s_or3, _ = self._arm(h, "emu_or3", flow)
-            out["or3"] = np.asarray(s_or3) / safe_n
+            # the constructed OR3, d_OR2 + (1 - d_OR2) * eps_res, and the gain it buys over the
+            # stored OR2 decision. The gain gets the same paired treatment as the residuals: it is
+            # a per-event difference on the same events, so its error is std(g)/sqrt(N).
+            s_or3, _ = self._arm(h, "emu_or3_built", flow)
+            s_gain, q_gain = self._arm(h, "gain_or3", flow)
+            gain = np.asarray(s_gain) / safe_n
+            var_g = np.asarray(q_gain) / safe_n - gain ** 2
+            out["or3_built"] = np.asarray(s_or3) / safe_n
+            out["gain"] = gain
+            out["gain_err"] = (
+                np.sqrt(np.clip(var_g, 0.0, None) / safe_n) if unit_weights
+                else np.full_like(gain, np.nan)
+            )
         return out
 
     # -- the run -------------------------------------------------------------------------------
@@ -380,6 +391,32 @@ class TopoEmulationClosure(
             group_acc[_group_of(dataset)].append(dataset)
 
         lines.append("")
+        lines.append("Predicted efficiencies with no truth in the 2024 menu, and the gain OR3 buys")
+        lines.append("over the stored OR2 decision. eps_res is the JOINT residual P(TOPO & ~OR2 | x)")
+        lines.append("and eps_TOPO the marginal. OR3(built) is d_OR2 + (1-d_OR2)*eps_res/(1-eps_OR2),")
+        lines.append("OR3(fit) the directly fitted union. The two estimate the same quantity by")
+        lines.append("different routes, so built-fit is a statement about the weight construction,")
+        lines.append("not a closure -- it should sit at the size of the or2 residual above, and a")
+        lines.append("large value means the construction is wrong rather than the transport.")
+        lines.append("")
+        head2 = (f"{'dataset':<40s} {'OR2 stored':>10s} {'eps_res':>8s} {'eps_TOPO':>9s} "
+                 f"{'OR3 built':>10s} {'OR3 fit':>8s} {'built-fit':>10s} {'gain':>8s} {'err':>7s}")
+        lines.append(head2)
+        lines.append("-" * len(head2))
+        for dataset in datasets:
+            r = integrated[dataset]
+            est = r["estimators"]
+            built = 100 * float(r["or3_built"])
+            fit = 100 * float(est["or3"]["eff_emulated"])
+            lines.append(
+                f"{dataset:<40s} {100 * float(est['or2']['eff_direct']):>9.2f}% "
+                f"{100 * float(est['topo_res']['eff_emulated']):>7.2f}% "
+                f"{100 * float(est['topo']['eff_emulated']):>8.2f}% "
+                f"{built:>9.2f}% {fit:>7.2f}% {built - fit:>+9.3f} "
+                f"{100 * float(r['gain']):>+7.3f} {100 * float(r['gain_err']):>6.3f}",
+            )
+
+        lines.append("")
         lines.append("By sample family (event-weighted mean of the per-dataset residuals):")
         for group, members in sorted(group_acc.items()):
             ns = np.array([float(integrated[d]["n"]) for d in members])
@@ -395,6 +432,10 @@ class TopoEmulationClosure(
                 mean = float(np.sum(ns * d) / ns.sum())
                 err = float(np.sqrt(np.sum((ns * s) ** 2)) / ns.sum())
                 row += f" | {est}: {100 * mean:+7.3f} +- {100 * err:6.3f} pp"
+            g = np.nan_to_num(np.array([float(integrated[m]["gain"]) for m in members]))
+            ge = np.nan_to_num(np.array([float(integrated[m]["gain_err"]) for m in members]))
+            row += (f" | OR3 gain: {100 * float(np.sum(ns * g) / ns.sum()):+7.3f} +- "
+                    f"{100 * float(np.sqrt(np.sum((ns * ge) ** 2)) / ns.sum()):6.3f} pp")
             lines.append(row)
 
         # outliers: bins whose residual is significant and which hold enough events to be believed
@@ -443,9 +484,19 @@ class TopoEmulationClosure(
         #: N-weighted mean. ``delta_err`` is not among them: it is an error and adds in quadrature.
         mean_keys = ("eff_direct", "eff_direct_err", "eff_emulated", "delta", "model_std")
 
+        #: the panels of each page. "closure" has truth and shows a residual; "predict" has none
+        #: and shows the ensemble spread; "gain" is the constructed OR3 against the stored OR2,
+        #: with the acceptance it buys underneath.
+        panels = (
+            [(e, "closure") for e in TOPO_CLOSURE_TARGETS] +
+            [(e, "predict") for e in TOPO_PREDICTION_ONLY] +
+            [("or3_built", "gain")]
+        )
+
         def combine(members, variable):
             """N-weighted mean of the per-dataset quantities over one sample family."""
             n_tot, acc, var = None, defaultdict(lambda: defaultdict(float)), defaultdict(float)
+            extra = defaultdict(float)
             for m in members:
                 r = differential[m][variable]
                 n = np.asarray(r["n"], dtype=float)
@@ -454,14 +505,21 @@ class TopoEmulationClosure(
                     for key in mean_keys:
                         acc[est][key] = acc[est][key] + np.nan_to_num(np.asarray(e[key], dtype=float)) * n
                     var[est] = var[est] + np.nan_to_num(np.asarray(e["delta_err"], dtype=float)) ** 2 * n ** 2
+                for key in ("or3_built", "gain"):
+                    extra[key] = extra[key] + np.nan_to_num(np.asarray(r[key], dtype=float)) * n
+                extra["gain_var"] = extra["gain_var"] + np.nan_to_num(
+                    np.asarray(r["gain_err"], dtype=float),
+                ) ** 2 * n ** 2
             safe = np.where(n_tot > 0, n_tot, np.nan)
             res = {"n": n_tot, "estimators": {}}
             for est in acc:
                 res["estimators"][est] = {k: acc[est][k] / safe for k in mean_keys}
                 res["estimators"][est]["delta_err"] = np.sqrt(var[est]) / safe
+            res["or3_built"] = extra["or3_built"] / safe
+            res["gain"] = extra["gain"] / safe
+            res["gain_err"] = np.sqrt(extra["gain_var"]) / safe
             return res
 
-        ests = list(TOPO_CLOSURE_TARGETS) + list(TOPO_PREDICTION_ONLY)
         pdf_path = out.child("topo_closure.pdf", type="f").abspath
         with PdfPages(pdf_path) as pdf:
             for variable in variables:
@@ -473,19 +531,37 @@ class TopoEmulationClosure(
                 inner = slice(1, len(edges))
 
                 fig, axes = plt.subplots(
-                    2, len(ests), figsize=(3.6 * len(ests), 5.6), sharex="col",
+                    2, len(panels), figsize=(3.3 * len(panels), 5.6), sharex="col",
                     gridspec_kw={"height_ratios": [2, 1]},
                 )
-                for j, est in enumerate(ests):
+                for j, (est, kind) in enumerate(panels):
                     ax, rax = axes[0][j], axes[1][j]
-                    predicted_only = est in TOPO_PREDICTION_ONLY
                     for k, (group, members) in enumerate(sorted(groups.items())):
                         c = colors[k % len(colors)]
                         r = combine(members, variable)
-                        e = r["estimators"][est]
                         mask = r["n"][inner] >= self.min_bin_events
                         if not mask.any():
                             continue
+
+                        if kind == "gain":
+                            # the constructed OR3 against the stored OR2 it is built on, with the
+                            # acceptance it buys underneath
+                            stored = r["estimators"]["or2"]["eff_direct"][inner]
+                            built = r["or3_built"][inner]
+                            ax.stairs(np.where(mask, built, np.nan), edges, baseline=None,
+                                      color=c, ls="--", label=f"{group} (OR3 built)")
+                            ax.errorbar(
+                                centres[mask], stored[mask],
+                                yerr=r["estimators"]["or2"]["eff_direct_err"][inner][mask],
+                                fmt="o", ms=3, color=c, label=f"{group} (OR2 stored)",
+                            )
+                            rax.errorbar(
+                                centres[mask], 100 * r["gain"][inner][mask],
+                                yerr=100 * r["gain_err"][inner][mask], fmt="o", ms=3, color=c,
+                            )
+                            continue
+
+                        e = r["estimators"][est]
                         emu = e["eff_emulated"][inner]
                         spread = e["model_std"][inner]
                         # the emulated efficiency is a per-bin average, so draw it as a step over
@@ -497,7 +573,7 @@ class TopoEmulationClosure(
                         ax.stairs(np.where(mask, emu + spread, np.nan), edges,
                                   baseline=np.where(mask, emu - spread, np.nan),
                                   fill=True, alpha=0.15, color=c)
-                        if not predicted_only:
+                        if kind == "closure":
                             ax.errorbar(
                                 centres[mask], e["eff_direct"][inner][mask],
                                 yerr=e["eff_direct_err"][inner][mask],
@@ -514,13 +590,21 @@ class TopoEmulationClosure(
                                 centres[mask], 100 * spread[mask], yerr=None,
                                 fmt="o", ms=3, color=c,
                             )
-                    ax.set_title(est + ("  (no truth: prediction only)" if predicted_only else ""),
-                                 fontsize=8)
+                    title = {
+                        "closure": est,
+                        "predict": f"{est}  (no truth: prediction)",
+                        "gain": "OR3 built vs OR2 stored",
+                    }[kind]
+                    ax.set_title(title, fontsize=7)
                     ax.set_ylim(-0.05, 1.25)
                     ax.set_ylabel("efficiency")
                     rax.axhline(0.0, color="k", lw=0.8)
-                    rax.set_ylabel("ensemble spread [pp]" if predicted_only else "emu - stored [pp]")
-                    rax.set_xlabel(var_inst.x_title)
+                    rax.set_ylabel({
+                        "closure": "emu - stored [pp]",
+                        "predict": "ensemble spread [pp]",
+                        "gain": "OR3 - OR2 [pp]",
+                    }[kind], fontsize=7)
+                    rax.set_xlabel(var_inst.x_title, fontsize=7)
                     if j == 0:
                         ax.legend(fontsize=5, ncol=2, loc="lower right")
                 fig.suptitle(

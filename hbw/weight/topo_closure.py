@@ -85,7 +85,12 @@ TOPO_CLOSURE_TARGETS = {
 }
 
 #: estimators with no truth in the 2024 menu: predicted, never closed.
-TOPO_PREDICTION_ONLY = ("topo_res",)
+#:
+#: ``topo_res`` is the residual that builds the weight, ``topo`` the marginal TOPO efficiency, and
+#: ``or3`` the directly fitted three-path union. None of the three can be closed here -- TOPO is
+#: absent from the 2024 menu, which is the entire reason any of this is emulated -- so all three
+#: are reported with their ensemble spread and never with a residual.
+TOPO_PREDICTION_ONLY = ("topo_res", "topo", "or3")
 
 #: the arm axis, in fill order. Kept as a module constant so the reading task cannot disagree with
 #: the writing producer about what a slice means.
@@ -93,7 +98,11 @@ TOPO_CLOSURE_ARMS = tuple(
     ["den_all", "den"] +
     [f"{p}_{e}" for e in TOPO_CLOSURE_TARGETS for p in ("dir", "emu", "dif", "std")] +
     [f"{p}_{e}" for e in TOPO_PREDICTION_ONLY for p in ("emu", "std")] +
-    ["emu_or3"],
+    # the constructed OR3 weight, and the per-event gain it buys over the stored OR2 decision.
+    # The gain is carried as its own arm rather than subtracted afterwards for the same reason the
+    # dif_ arms are: it is a per-event difference on the same events, so the Weight storage hands
+    # over its paired error, and the quadrature sum of two efficiency errors would be wrong.
+    ["emu_or3_built", "gain_or3"],
 )
 
 
@@ -108,7 +117,7 @@ TOPO_CLOSURE_ARMS = tuple(
     #: event weight applied on top of every arm factor. ``None`` means 1, which is what makes the
     #: paired-error identity above exact. Only override it for a yield-level statement.
     weight_column=None,
-    version=0,
+    version=1,
 )
 def topo_closure(self: HistProducer, events: ak.Array, **kwargs) -> ak.Array:
     if self.weight_column is None:
@@ -164,7 +173,9 @@ def topo_closure_fill_hist(
     for est in TOPO_PREDICTION_ONLY:
         factors[f"emu_{est}"] = col(f"topo_eff_{est}") * support
         factors[f"std_{est}"] = col(f"topo_eff_{est}_std") * support
-    factors["emu_or3"] = col("topo_trigger_weight") * support
+    w_or3 = col("topo_trigger_weight")
+    factors["emu_or3_built"] = w_or3 * support
+    factors["gain_or3"] = (w_or3 - col("topo_or2")) * support
 
     for arm, factor in factors.items():
         fill_hist(

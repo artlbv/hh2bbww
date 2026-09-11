@@ -268,7 +268,14 @@ def topo_isomu24_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array
 #: here ONLY so the emulation can be checked against that truth -- they are the closure test, not
 #: an input to any weight. Only ``topo_res`` is load-bearing, because TOPO is the one path that
 #: does not exist in the 2024 menu.
-TOPO_ESTIMATORS = ("isomu24", "mu12", "or2", "topo_res")
+#:
+#: ``topo`` and ``or3`` are the marginal TOPO efficiency and the directly fitted three-path union.
+#: Neither builds a weight -- the weight uses the residual, precisely so that no leg-factorisation
+#: assumption enters -- but they are what a reader actually wants to see, and ``or3`` doubles as a
+#: check on the residual construction: ``d_OR2 + (1 - d_OR2) * eps_res`` and the directly fitted
+#: ``eps_OR3`` estimate the same quantity by different routes, so a disagreement between them is a
+#: statement about the construction that nothing else in the chain would make.
+TOPO_ESTIMATORS = ("isomu24", "mu12", "or2", "topo_res", "topo", "or3")
 
 #: the estimator whose output enters the OR3 weight.
 TOPO_RESIDUAL_ESTIMATOR = "topo_res"
@@ -289,7 +296,7 @@ TOPO_RESIDUAL_ESTIMATOR = "topo_res"
     #: ``n_mu>=1 & n_jet>=3 & n_btag_pnet>=2 & n_ele_tight==0`` while ``topo_feat.valid`` is only
     #: the first two terms, so ``valid`` alone would extrapolate the model outside its support.
     min_n_btag_pnet=2,
-    version=0,
+    version=2,
 )
 def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     """
@@ -297,10 +304,12 @@ def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
 
     .. code-block:: text
 
-        w_OR3 = d_OR2 * SF_OR2  +  (1 - d_OR2) * eps_res(c)
+        w_OR3 = d_OR2 * SF_OR2  +  (1 - d_OR2) * eps_res(c) / (1 - eps_OR2(c))
 
     with ``SF_OR2 == 1`` for now (see :py:func:`topo_or2_weights`) and ``eps_res`` the calibrated
-    ensemble mean for the residual target ``TOPO & ~OR2``.
+    ensemble mean for the residual target ``TOPO & ~OR2``. The division is not cosmetic -- see the
+    comment at the weight itself; ``eps_res`` is a joint probability, so without it the ``~OR2``
+    condition is applied twice and the TOPO gain comes out several times too small.
 
     Two choices that look like details and are not:
 
@@ -360,7 +369,26 @@ def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
 
     d_or2 = np.asarray(ak.to_numpy(events.topo_or2), dtype=np.float64)
     eff_res = np.asarray(ak.to_numpy(events[f"topo_eff_{TOPO_RESIDUAL_ESTIMATOR}"]), dtype=np.float64)
-    w = d_or2 + (1.0 - d_or2) * eff_res
+    eff_or2 = np.asarray(ak.to_numpy(events.topo_eff_or2), dtype=np.float64)
+
+    # The residual estimator is a JOINT probability, eps_res(x) = P(TOPO & ~OR2 | x) -- its target
+    # is ``topo & ~or2`` over every preselected event, not over the OR2-failing ones. So it already
+    # carries the ~OR2 requirement, and multiplying it by the stored (1 - d_OR2) applies that
+    # requirement a SECOND time. What is wanted on an OR2-failing event is the conditional
+    # P(TOPO | ~OR2, x) = P(TOPO & ~OR2 | x) / P(~OR2 | x), and the emulated OR2 efficiency is
+    # exactly the denominator.
+    #
+    # The correction is not small. Measured on reduced 2024 signal, the double-counted form gives a
+    # TOPO gain of 2.3 pp where the conditional form gives 8.0 pp, because E[(1 - d_OR2) eps_res] is
+    # smaller than E[eps_res] by a factor of P(~OR2) ~ 0.3.
+    #
+    # In expectation the conditional form is exact: E[(1 - d_OR2) | x] = 1 - eps_OR2(x), which
+    # cancels the denominator and leaves E[w] = P(OR2) + E[eps_res] = P(OR3). The one assumption is
+    # that eps_OR2 estimates P(OR2 | x) well -- and that is not an assumption we have to take on
+    # faith, because it is precisely what hbw.TopoEmulationClosure measures against the stored bit.
+    p_fail = np.clip(1.0 - eff_or2, 1e-6, None)
+    eff_cond = np.clip(eff_res / p_fail, 0.0, 1.0)
+    w = np.clip(d_or2 + (1.0 - d_or2) * eff_cond, 0.0, 1.0)
     events = set_ak_column(events, "topo_trigger_weight", w.astype(np.float32))
 
     return events

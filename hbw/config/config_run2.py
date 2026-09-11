@@ -1229,7 +1229,7 @@ def add_config(
     # swap plus a version bump here -- no code change -- as long as the bundle's feature_order and
     # presel still match; the producer asserts the former on load.
     if cfg.has_tag("is_sl"):
-        add_external("topo_ensemble", (f"{model_path}/topo_ens_K20_hhmc_poc_v0.json.gz", "v0"))
+        add_external("topo_ensemble", (f"{model_path}/topo_ens_K20_hhmc_poc_v1.json.gz", "v1"))
 
     # V+jets reweighting (derived for 13 TeV, custom json converted from ROOT, not centrally produced)
     # ROOT files (eej.root and aj.root) taken from here:
