@@ -11,10 +11,16 @@
 # qcd_mu + VV, with the electron-enriched QCD deliberately absent. Keep it in sync with the study,
 # otherwise the closure is measured on a different population than the one it is used to correct.
 #
-# The default category is "incl". Note what the category axis actually carries for sl1_topo: the
-# leaves are the individual blocks (incl, sr, 1mu, 1e, highmet, lowmet, fake), NOT composites like
-# sr__1mu, because the composite categories come from the pre_ml_cats producer which this chain does
-# not run. Ask for "1mu" to get the muon channel.
+# The default category is "1mu", not "incl". The estimator needs a muon and vetoes tight electrons,
+# so on electron events it is undefined by construction -- valid holds for 0.2% of 1e events against
+# 96% of 1mu ones -- and since incl is ~40% electrons, quoting there makes the model look far
+# narrower than it is for a reason unrelated to the model.
+#
+# Note what the category axis actually carries for sl1_topo: the leaves are the individual blocks
+# (incl, sr, 1mu, 1e, highmet, lowmet, fake), NOT composites like sr__1mu, because the composites
+# come from the pre_ml_cats producer which this chain does not run. category_ids holds every block
+# an event belongs to, so the intersection sr AND 1mu cannot be formed from the axis either -- add
+# pre_ml_cats to the producers if the numbers have to line up with a result quoted in sr__1mu__*.
 
 set -euo pipefail
 
@@ -25,7 +31,7 @@ ANALYSIS="hbw.analysis.hbw_sl.hbw_sl"
 SELECTOR="sl1_topo"
 PRODUCERS="topo_or3_weights"
 HIST_PRODUCER="topo_closure"
-CATEGORIES="${TOPO_CLOSURE_CATEGORIES:-incl}"
+CATEGORIES="${TOPO_CLOSURE_CATEGORIES:-1mu}"
 
 DATASETS="dy_ee_m10to50_amcatnlo,dy_ee_m50toinf_0j_amcatnlo,dy_ee_m50toinf_1j_amcatnlo,\
 dy_ee_m50toinf_2j_amcatnlo,dy_ee_m50toinf_amcatnlo,dy_mumu_m10to50_amcatnlo,\

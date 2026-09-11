@@ -134,8 +134,18 @@ class TopoEmulationClosure(
         default=TOPO_CLOSURE_VARIABLES,
         add_default_to_description=True,
     )
+    #: the muon channel, NOT ``incl``. The estimator's training preselection requires a muon and
+    #: vetoes tight electrons, so on electron events it is undefined by construction -- measured on
+    #: reduced 2024 signal, ``topo_feat.valid`` holds for 0.23% of ``1e`` events against 95.96% of
+    #: ``1mu`` ones. Since ``incl`` is about 40% electron events, quoting anything there drags the
+    #: in-support fraction from 57.5% down to 34.4% and makes the model look far narrower than it
+    #: is, for a reason that has nothing to do with the model.
+    #:
+    #: ``1mu`` is a leaf here and ``sr__1mu`` is not, because the composite categories come from
+    #: the ``pre_ml_cats`` producer which this chain does not run; add it to ``--producers`` if the
+    #: numbers have to line up with a sensitivity result quoted in ``sr__1mu__*``.
     categories = HistogramsUserSingleShiftBase.categories.copy(
-        default=("incl",),
+        default=("1mu",),
         add_default_to_description=True,
     )
     ml_models = HistogramsUserSingleShiftBase.ml_models.copy(
