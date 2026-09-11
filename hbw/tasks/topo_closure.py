@@ -389,6 +389,9 @@ class TopoEmulationClosure(
             for est in TOPO_CLOSURE_TARGETS:
                 d = np.array([float(integrated[m]["estimators"][est]["delta"]) for m in members])
                 s = np.array([float(integrated[m]["estimators"][est]["delta_err"]) for m in members])
+                # a member with no in-support events carries NaN, and 0 * NaN is NaN, which would
+                # poison the whole family. It contributes nothing, so drop it rather than weight it.
+                d, s = np.nan_to_num(d), np.nan_to_num(s)
                 mean = float(np.sum(ns * d) / ns.sum())
                 err = float(np.sqrt(np.sum((ns * s) ** 2)) / ns.sum())
                 row += f" | {est}: {100 * mean:+7.3f} +- {100 * err:6.3f} pp"
