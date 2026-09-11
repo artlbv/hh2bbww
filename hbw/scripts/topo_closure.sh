@@ -54,7 +54,13 @@ fi
 case "$MODE" in
     limited)
         CONFIG="l24v15"
-        EXTRA=(--workers "${TOPO_CLOSURE_WORKERS:-6}")
+        # The WLCG read cache is off by default for local multi-worker runs. law's cache
+        # allocate() lists the cache directory and then stats each entry, so once the cache is at
+        # its max size and eviction runs on every allocation, two workers race and the loser dies
+        # with FileNotFoundError on a path that existed a moment earlier. Streaming from the
+        # redirector removes the race; set TOPO_CLOSURE_CACHE=true to put it back.
+        export CF_WLCG_USE_CACHE="${TOPO_CLOSURE_CACHE:-false}"
+        EXTRA=(--workers "${TOPO_CLOSURE_WORKERS:-4}")
         ;;
     full)
         CONFIG="c24v15"
