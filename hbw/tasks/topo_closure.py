@@ -197,6 +197,25 @@ class TopoEmulationClosure(
 
     # -- the arithmetic ------------------------------------------------------------------------
 
+    def _wanted_categories(self, h) -> list:
+        """
+        The requested categories, expanded to leaves and intersected with what *this* histogram has.
+
+        Returns an empty list when the histogram carries none of them, which is a normal state for
+        a single dataset -- see :py:meth:`_select_categories` -- and is therefore reported rather
+        than raised on.
+        """
+        axis_names = list(h.axes["category"])
+        wanted = []
+        for name in self.categories:
+            cat = self.config_inst.get_category(name)
+            leaves = [c.name for c in (cat.get_leaf_categories() or [cat])]
+            present = [c for c in leaves if c in axis_names]
+            if not present and name in axis_names:
+                present = [name]
+            wanted.extend(present)
+        return list(dict.fromkeys(wanted))
+
     def _select_categories(self, h):
         """
         Restrict the category axis to the requested categories, then sum it.
@@ -212,23 +231,18 @@ class TopoEmulationClosure(
         were run, and it varies per dataset (a dataset with no events in a category simply has no
         entry). So the requested names are expanded to leaves, intersected with what is present,
         and a name that survives as itself is kept as itself.
+
+        Reaching this method with nothing present is a programming error: ``run`` drops such
+        datasets up front, because an empty intersection is a property of one dataset and not of
+        the request.
         """
         import hist
 
-        axis_names = list(h.axes["category"])
-        wanted = []
-        for name in self.categories:
-            cat = self.config_inst.get_category(name)
-            leaves = [c.name for c in (cat.get_leaf_categories() or [cat])]
-            present = [c for c in leaves if c in axis_names]
-            if not present and name in axis_names:
-                present = [name]
-            wanted.extend(present)
-        wanted = list(dict.fromkeys(wanted))
+        wanted = self._wanted_categories(h)
         if not wanted:
             raise ValueError(
                 f"none of the requested categories {list(self.categories)} (nor their leaves) are "
-                f"present on the histogram, which carries {axis_names}",
+                f"present on the histogram, which carries {list(h.axes['category'])}",
             )
         return h[{"category": [hist.loc(c) for c in wanted]}][{"category": sum}]
 
@@ -339,6 +353,27 @@ class TopoEmulationClosure(
             for variable in variables:
                 hists[dataset][variable] = self.load_histogram(inputs, config, dataset, variable)
 
+        # ``category_ids`` only carries categories an event is actually in, so a dataset with zero
+        # events in the requested one has no entry on the axis at all rather than an empty bin.
+        # That is routine in the limited config -- two files of dy_ee can easily contain no 1mu
+        # event -- and such a dataset contributes nothing to the closure, so it is dropped with a
+        # note instead of killing the run. If *every* dataset is empty the request itself is wrong
+        # (a mistyped or unproduced category), and that stays fatal.
+        skipped = [d for d in datasets if not self._wanted_categories(hists[d][variables[0]])]
+        datasets = [d for d in datasets if d not in set(skipped)]
+        if skipped:
+            logger.warning(
+                f"{len(skipped)} of {len(skipped) + len(datasets)} datasets carry no "
+                f"{list(self.categories)} events and are excluded from the closure: "
+                f"{', '.join(skipped)}",
+            )
+        if not datasets:
+            raise ValueError(
+                f"none of the requested categories {list(self.categories)} are present on any of "
+                f"the {len(skipped)} datasets; check the category name and that the producers "
+                "writing it were run",
+            )
+
         # integrated numbers, computed once per (dataset, variable). They must not depend on the
         # variable; if they do, a flow bin was lost somewhere and every differential number below
         # is suspect, so this is a hard failure rather than a warning.
@@ -380,6 +415,10 @@ class TopoEmulationClosure(
             "hist_producer": self.hist_producer,
             "min_bin_events": self.min_bin_events,
             "datasets": datasets,
+            # datasets that were requested but carry no events in the requested category; recorded
+            # so a reader can tell "this process was not asked for" from "it was asked for and had
+            # nothing", which the datasets list alone cannot distinguish
+            "datasets_skipped_empty": skipped,
             "variables": variables,
             "integrated": jsonify(integrated),
             "differential": {
