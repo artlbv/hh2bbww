@@ -4,21 +4,29 @@
 Closure test of the TOPO trigger emulation, per sample and per variable.
 
 THE QUESTION
-The OR3 weight is ``d_OR2 + (1 - d_OR2) * eps_res``, and ``eps_res`` comes from a BDT ensemble that
-was fitted somewhere else, on a different campaign and a different HLT menu. Nothing in the analysis
-can check ``eps_res`` directly: TOPO does not exist in the 2024 menu, which is why it is emulated at
-all. What *can* be checked is the transport itself. Three of the four estimators in the same bundle,
-built from the same features by the same code, target triggers whose decisions are stored bits here.
-Their closure is the only handle on whether the ensemble survives the move into this campaign, and
-the residual it leaves is the natural size of the emulation systematic.
+The proposed-menu weight is ``eps_OR3``, the directly fitted ``IsoMu24 | Mu12 | TOPO`` efficiency,
+from a BDT ensemble that was fitted somewhere else, on a different campaign and a different HLT
+menu. Nothing in the analysis can check ``eps_OR3`` directly: TOPO does not exist in the 2024 menu,
+which is why it is emulated at all. What *can* be checked is the transport itself. Three of the six
+estimators in the same bundle, built from the same features by the same code, target triggers whose
+decisions are stored bits here. Their closure is the only handle on whether the ensemble survives
+the move into this campaign, and the residual it leaves is the natural size of the emulation
+systematic.
+
+A second, weaker handle is reported beside it. The same OR3 efficiency can be reached by the exact
+decomposition ``P(OR3) = P(OR2) + P(TOPO & ~OR2)``, whose two pieces are a stored bit and a
+separately fitted residual. That route is no longer the applied weight -- it would put ``SF_OR2``,
+and with it the online-b-tagged ``Mu12`` leg, on a term worth most of the weight -- but the
+difference between the two routes is a statement about the emulation's internal coherence that
+nothing else in the chain makes.
 
 So this task answers, per sample and per variable: *does the emulated efficiency reproduce the
 stored one, and where does it fail?*
 
 WHAT IS AND IS NOT A CLOSURE HERE
-``isomu24``, ``mu12`` and ``or2`` are closures. ``topo_res`` is not -- it is plotted as a prediction
-with its ensemble spread, and no residual is quoted for it. Reading a ``topo_res`` band as a
-validation would be reading the model's opinion of itself.
+``isomu24``, ``mu12`` and ``or2`` are closures. ``topo_res``, ``topo`` and ``or3`` are not -- they
+are plotted as predictions with their ensemble spread, and no residual is quoted for them. Reading
+one of those bands as a validation would be reading the model's opinion of itself.
 
 WHY THE DENOMINATOR IS ``topo_in_support`` AND NOT ``topo_feat.valid``
 ``valid`` is only ``n_mu >= 1 & n_jet >= 3``; the estimator's training preselection additionally
@@ -295,19 +303,22 @@ class TopoEmulationClosure(
                     "pull": np.full_like(np.asarray(s_emu, dtype=float), np.nan),
                     "model_std": np.asarray(s_std) / safe_n,
                 }
-            # the constructed OR3, d_OR2 + (1 - d_OR2) * eps_res, and the gain it buys over the
-            # stored OR2 decision. The gain gets the same paired treatment as the residuals: it is
-            # a per-event difference on the same events, so its error is std(g)/sqrt(N).
+            # the OR2 + residual construction, kept only so it can be differenced against the
+            # directly fitted or3, and the two gains the applied weight buys over the stored and
+            # the emulated OR2. Each gain gets the same paired treatment as the residuals: it is a
+            # per-event difference on the same events, so its error is std(g)/sqrt(N) and not the
+            # quadrature sum of two efficiency errors.
             s_or3, _ = self._arm(h, "emu_or3_built", flow)
-            s_gain, q_gain = self._arm(h, "gain_or3", flow)
-            gain = np.asarray(s_gain) / safe_n
-            var_g = np.asarray(q_gain) / safe_n - gain ** 2
             out["or3_built"] = np.asarray(s_or3) / safe_n
-            out["gain"] = gain
-            out["gain_err"] = (
-                np.sqrt(np.clip(var_g, 0.0, None) / safe_n) if unit_weights
-                else np.full_like(gain, np.nan)
-            )
+            for key, arm in (("gain", "gain_or3"), ("gain_emu", "gain_emu")):
+                s_gain, q_gain = self._arm(h, arm, flow)
+                gain = np.asarray(s_gain) / safe_n
+                var_g = np.asarray(q_gain) / safe_n - gain ** 2
+                out[key] = gain
+                out[f"{key}_err"] = (
+                    np.sqrt(np.clip(var_g, 0.0, None) / safe_n) if unit_weights
+                    else np.full_like(gain, np.nan)
+                )
         return out
 
     # -- the run -------------------------------------------------------------------------------
@@ -415,13 +426,30 @@ class TopoEmulationClosure(
             group_acc[_group_of(dataset)].append(dataset)
 
         lines.append("")
-        lines.append("Predicted efficiencies with no truth in the 2024 menu, and the gain OR3 buys")
-        lines.append("over the stored OR2 decision. eps_res is the JOINT residual P(TOPO & ~OR2 | x)")
-        lines.append("and eps_TOPO the marginal. OR3(built) is d_OR2 + (1-d_OR2)*eps_res/(1-eps_OR2),")
-        lines.append("OR3(fit) the directly fitted union. The two estimate the same quantity by")
-        lines.append("different routes, so built-fit is a statement about the weight construction,")
-        lines.append("not a closure -- it should sit at the size of the or2 residual above, and a")
-        lines.append("large value means the construction is wrong rather than the transport.")
+        lines.append("Predicted efficiencies with no truth in the 2024 menu, and the gain the")
+        lines.append("APPLIED weight buys over OR2. eps_res is the JOINT residual P(TOPO & ~OR2|x)")
+        lines.append("and eps_TOPO the marginal. OR3(fit) is the directly fitted union and IS the")
+        lines.append("applied weight; OR3(built) is the d_OR2 + (1-d_OR2)*eps_res/(1-eps_OR2)")
+        lines.append("construction, no longer applied but kept because it reaches the same quantity")
+        lines.append("by an independent route -- so built-fit is a statement about the emulation's")
+        lines.append("internal coherence, and should sit at the size of the or2 residual above.")
+        lines.append("")
+        lines.append("The applied weight is a single directly fitted efficiency and NOT the residual")
+        lines.append("construction, for two reasons that point the same way. First, scale factors:")
+        lines.append("the residual form needs SF_OR2 on a term worth ~86% of the weight, and SF_OR2")
+        lines.append("carries the Mu12 leg whose ONLINE b-tag requirement has the widest expected SF")
+        lines.append("spread in the menu. In a directly fitted OR3 that leg matters only where it is")
+        lines.append("the sole path firing, which is a small corner. Second, closure: the residual")
+        lines.append("form divides by (1-eps_OR2), importing the worst-closing of the three")
+        lines.append("emulations (mu12) into a denominator. Neither route assumes leg")
+        lines.append("factorisation; both targets are fitted on the bit itself.")
+        lines.append("")
+        lines.append("TWO gain columns, and they answer different questions. 'gain' is against the")
+        lines.append("STORED OR2 decision, so it is model-minus-truth and carries the OR3 closure")
+        lines.append("bias at full size. 'gain(emu)' is against the EMULATED OR2, so both sides come")
+        lines.append("from the same fit on the same events and the common part of each estimator's")
+        lines.append("bias cancels -- that is the apples-to-apples number, and the difference")
+        lines.append("between the two columns is roughly the OR2 residual reported above.")
         lines.append("")
         lines.append("'gain' is conditional on being in support. 'gain*supp' dilutes it by the")
         lines.append("in-support fraction and is the ceiling on what OR3 can add to the WHOLE")
@@ -456,7 +484,7 @@ class TopoEmulationClosure(
         lines.append("")
         head2 = (f"{'dataset':<40s} {'OR2 stored':>10s} {'eps_res':>8s} {'eps_TOPO':>9s} "
                  f"{'OR3 built':>10s} {'OR3 fit':>8s} {'built-fit':>10s} {'gain':>8s} {'err':>7s} "
-                 f"{'supp':>6s} {'gain*supp':>10s}")
+                 f"{'gain(emu)':>10s} {'err':>7s} {'supp':>6s} {'gain*supp':>10s}")
         lines.append(head2)
         lines.append("-" * len(head2))
         for dataset in datasets:
@@ -470,6 +498,7 @@ class TopoEmulationClosure(
                 f"{100 * float(est['topo']['eff_emulated']):>8.2f}% "
                 f"{built:>9.2f}% {fit:>7.2f}% {built - fit:>+9.3f} "
                 f"{100 * float(r['gain']):>+7.3f} {100 * float(r['gain_err']):>6.3f} "
+                f"{100 * float(r['gain_emu']):>+9.3f} {100 * float(r['gain_emu_err']):>6.3f} "
                 f"{100 * float(r['in_support_frac']):>5.1f}% "
                 f"{100 * float(r['gain']) * float(r['in_support_frac']):>+9.3f}",
             )
@@ -543,8 +572,8 @@ class TopoEmulationClosure(
         mean_keys = ("eff_direct", "eff_direct_err", "eff_emulated", "delta", "model_std")
 
         #: the panels of each page. "closure" has truth and shows a residual; "predict" has none
-        #: and shows the ensemble spread; "gain" is the constructed OR3 against the stored OR2,
-        #: with the acceptance it buys underneath.
+        #: and shows the ensemble spread; "gain" is the applied weight against the stored OR2
+        #: decision, with the acceptance it buys underneath.
         panels = (
             [(e, "closure") for e in TOPO_CLOSURE_TARGETS] +
             [(e, "predict") for e in TOPO_PREDICTION_ONLY] +
@@ -563,19 +592,21 @@ class TopoEmulationClosure(
                     for key in mean_keys:
                         acc[est][key] = acc[est][key] + np.nan_to_num(np.asarray(e[key], dtype=float)) * n
                     var[est] = var[est] + np.nan_to_num(np.asarray(e["delta_err"], dtype=float)) ** 2 * n ** 2
-                for key in ("or3_built", "gain"):
+                for key in ("or3_built", "gain", "gain_emu"):
                     extra[key] = extra[key] + np.nan_to_num(np.asarray(r[key], dtype=float)) * n
-                extra["gain_var"] = extra["gain_var"] + np.nan_to_num(
-                    np.asarray(r["gain_err"], dtype=float),
-                ) ** 2 * n ** 2
+                for key in ("gain", "gain_emu"):
+                    extra[f"{key}_var"] = extra[f"{key}_var"] + np.nan_to_num(
+                        np.asarray(r[f"{key}_err"], dtype=float),
+                    ) ** 2 * n ** 2
             safe = np.where(n_tot > 0, n_tot, np.nan)
             res = {"n": n_tot, "estimators": {}}
             for est in acc:
                 res["estimators"][est] = {k: acc[est][k] / safe for k in mean_keys}
                 res["estimators"][est]["delta_err"] = np.sqrt(var[est]) / safe
             res["or3_built"] = extra["or3_built"] / safe
-            res["gain"] = extra["gain"] / safe
-            res["gain_err"] = np.sqrt(extra["gain_var"]) / safe
+            for key in ("gain", "gain_emu"):
+                res[key] = extra[key] / safe
+                res[f"{key}_err"] = np.sqrt(extra[f"{key}_var"]) / safe
             return res
 
         pdf_path = out.child("topo_closure.pdf", type="f").abspath

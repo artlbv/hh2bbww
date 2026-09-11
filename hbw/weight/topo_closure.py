@@ -4,7 +4,7 @@
 Hist producer for the closure test of the TOPO trigger emulation.
 
 WHAT THIS MEASURES
-For three of the four estimators shipped in the exported ensemble the target trigger is a *stored
+For three of the six estimators shipped in the exported ensemble the target trigger is a *stored
 bit* in Summer24 NanoAODv15, so the emulated efficiency can be compared to truth on our own events:
 
 ======================  ==========================================  ===============================
@@ -15,9 +15,11 @@ estimator               emulated column                             stored truth
 ``or2``                 ``topo_eff_or2``                            ``topo_or2``
 ======================  ==========================================  ===============================
 
-The fourth, ``topo_res``, has no truth anywhere in 2024 -- TOPO is not in the menu, which is the
-whole reason it has to be emulated -- so it is carried as a *prediction only* and never enters a
-residual. Its plotted band is the ensemble spread, not a closure.
+The other three -- ``topo_res``, ``topo`` and ``or3``, the residual, the marginal TOPO path and the
+directly fitted three-path union -- have no truth anywhere in 2024, TOPO not being in the menu,
+which is the whole reason any of this is emulated. They are carried as *predictions only* and never
+enter a residual; their plotted bands are the ensemble spread, not a closure. ``or3`` is the one the
+applied weight is taken from, so it is the one the analysis actually stands on.
 
 HOW ONE PASS PRODUCES ALL OF IT
 Everything is filled into a single histogram carrying one extra ``arm`` axis, the same trick
@@ -33,7 +35,8 @@ The arm weights are, per event, with ``s = topo_in_support``:
 * ``emu_<e>`` -- ``f_e * s``   (ensemble mean)
 * ``dif_<e>`` -- ``(f_e - y_e) * s``
 * ``std_<e>`` -- ``sigma_e * s`` (ensemble spread, i.e. the model's own uncertainty)
-* ``emu_or3`` -- the full OR3 weight, for the yield statement
+* ``emu_or3_built`` -- the OR2 + residual construction, kept as a cross-check on ``emu_or3``
+* ``gain_or3`` / ``gain_emu`` -- the applied weight minus the stored / the emulated OR2
 
 WHY ``dif_`` IS A SEPARATE ARM AND NOT A SUBTRACTION AFTERWARDS
 ``f`` and ``y`` are measured on the *same events*, so they are strongly correlated and the error on
@@ -98,17 +101,26 @@ TOPO_CLOSURE_ARMS = tuple(
     ["den_all", "den"] +
     [f"{p}_{e}" for e in TOPO_CLOSURE_TARGETS for p in ("dir", "emu", "dif", "std")] +
     [f"{p}_{e}" for e in TOPO_PREDICTION_ONLY for p in ("emu", "std")] +
-    # the constructed OR3 weight, and the per-event gain it buys over the stored OR2 decision.
-    # The gain is carried as its own arm rather than subtracted afterwards for the same reason the
-    # dif_ arms are: it is a per-event difference on the same events, so the Weight storage hands
-    # over its paired error, and the quadrature sum of two efficiency errors would be wrong.
-    ["emu_or3_built", "gain_or3"],
+    # ``emu_or3_built`` is the OR2 + residual construction, which is no longer the applied weight
+    # but is kept because it estimates the same quantity as the directly fitted ``emu_or3`` by an
+    # independent route -- their difference is the sharpest statement the closure can make about
+    # the emulation, and nothing else in the chain makes it.
+    #
+    # The two gains are the applied weight against the stored OR2 decision and against the
+    # *emulated* one. The second is the apples-to-apples number: both sides then come from the same
+    # fit on the same events, so the part of each estimator's bias that is common to them cancels,
+    # whereas model-minus-truth carries the OR3 closure bias into the gain at full size.
+    #
+    # Both are carried as their own arms rather than subtracted afterwards for the same reason the
+    # dif_ arms are: they are per-event differences on the same events, so the Weight storage hands
+    # over the paired error, and the quadrature sum of two efficiency errors would be wrong.
+    ["emu_or3_built", "gain_or3", "gain_emu"],
 )
 
 
 @cf_default.hist_producer(
     uses=(
-        {"topo_in_support", "topo_trigger_weight"} |
+        {"topo_in_support", "topo_trigger_weight", "topo_trigger_weight_built"} |
         set(TOPO_CLOSURE_TARGETS.values()) |
         {f"topo_eff_{e}" for e in list(TOPO_CLOSURE_TARGETS) + list(TOPO_PREDICTION_ONLY)} |
         {f"topo_eff_{e}_std" for e in list(TOPO_CLOSURE_TARGETS) + list(TOPO_PREDICTION_ONLY)}
@@ -117,7 +129,7 @@ TOPO_CLOSURE_ARMS = tuple(
     #: event weight applied on top of every arm factor. ``None`` means 1, which is what makes the
     #: paired-error identity above exact. Only override it for a yield-level statement.
     weight_column=None,
-    version=1,
+    version=2,
 )
 def topo_closure(self: HistProducer, events: ak.Array, **kwargs) -> ak.Array:
     if self.weight_column is None:
@@ -173,9 +185,10 @@ def topo_closure_fill_hist(
     for est in TOPO_PREDICTION_ONLY:
         factors[f"emu_{est}"] = col(f"topo_eff_{est}") * support
         factors[f"std_{est}"] = col(f"topo_eff_{est}_std") * support
-    w_or3 = col("topo_trigger_weight")
-    factors["emu_or3_built"] = w_or3 * support
-    factors["gain_or3"] = (w_or3 - col("topo_or2")) * support
+    w = col("topo_trigger_weight")
+    factors["emu_or3_built"] = col("topo_trigger_weight_built") * support
+    factors["gain_or3"] = (w - col("topo_or2")) * support
+    factors["gain_emu"] = (w - col("topo_eff_or2")) * support
 
     for arm, factor in factors.items():
         fill_hist(

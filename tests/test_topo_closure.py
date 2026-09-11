@@ -15,6 +15,9 @@ from columnflow.hist_util import create_hist_from_variables
 from hbw.weight.topo_closure import (
     TOPO_CLOSURE_ARMS, TOPO_CLOSURE_TARGETS, TOPO_PREDICTION_ONLY,
 )
+from hbw.production.topo_trigger import (
+    TOPO_ESTIMATORS, TOPO_RESIDUAL_ESTIMATOR, TOPO_WEIGHT_CHOICES, topo_or3_weights,
+)
 
 import order as od
 
@@ -38,6 +41,23 @@ class TopoClosureTest(unittest.TestCase):
             self.assertNotIn(f"dif_{est}", TOPO_CLOSURE_ARMS)
         self.assertIn("den", TOPO_CLOSURE_ARMS)
         self.assertIn("den_all", TOPO_CLOSURE_ARMS)
+        # both gains, against the stored and against the emulated OR2
+        self.assertIn("gain_or3", TOPO_CLOSURE_ARMS)
+        self.assertIn("gain_emu", TOPO_CLOSURE_ARMS)
+
+    def test_residual_cannot_become_the_weight(self):
+        """
+        ``topo_res`` targets ``TOPO & ~OR2``, a joint probability and not an efficiency, so it is
+        meaningless as a weight on its own -- it needs the ``1 / (1 - eps_OR2)`` conditioning and
+        the stored OR2 term around it. The applied weight is a single directly fitted efficiency
+        instead, so that no scale factor for the online-b-tagged ``Mu12`` leg rides on a term worth
+        most of the weight. Pin both halves: the residual is not offerable as a weight, and every
+        choice that is offered exists in the bundle.
+        """
+        self.assertNotIn(TOPO_RESIDUAL_ESTIMATOR, TOPO_WEIGHT_CHOICES)
+        for name in TOPO_WEIGHT_CHOICES:
+            self.assertIn(name, TOPO_ESTIMATORS)
+        self.assertIn(topo_or3_weights.weight_estimator, TOPO_WEIGHT_CHOICES)
 
     def test_paired_error_identity(self):
         """

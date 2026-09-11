@@ -277,15 +277,23 @@ def topo_isomu24_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array
 #: statement about the construction that nothing else in the chain would make.
 TOPO_ESTIMATORS = ("isomu24", "mu12", "or2", "topo_res", "topo", "or3")
 
-#: the estimator whose output enters the OR3 weight.
+#: the estimator used by the residual construction, which is kept as a cross-check only.
 TOPO_RESIDUAL_ESTIMATOR = "topo_res"
+
+#: estimators that may be used as the applied weight. ``or3`` is the proposed menu, ``topo`` the
+#: TOPO path alone; the legs are listed so a leg-only study needs no code change. ``topo_res`` is
+#: deliberately absent -- it is a residual, not an efficiency, and is not a weight on its own.
+TOPO_WEIGHT_CHOICES = ("or3", "topo", "or2", "isomu24", "mu12")
 
 
 @producer(
     uses={topo_or2_weights, topo_isomu24_weights} | {f"topo_feat.{f}" for f in FEATURE_ORDER} | {
         "topo_feat.valid", "topo_feat.n_btag_pnet",
     },
-    produces={topo_or2_weights, topo_isomu24_weights, "topo_trigger_weight", "topo_in_support"} | {
+    produces={
+        topo_or2_weights, topo_isomu24_weights,
+        "topo_trigger_weight", "topo_trigger_weight_built", "topo_in_support",
+    } | {
         f"topo_eff_{n}" for n in TOPO_ESTIMATORS
     } | {
         f"topo_eff_{n}_std" for n in TOPO_ESTIMATORS
@@ -296,39 +304,63 @@ TOPO_RESIDUAL_ESTIMATOR = "topo_res"
     #: ``n_mu>=1 & n_jet>=3 & n_btag_pnet>=2 & n_ele_tight==0`` while ``topo_feat.valid`` is only
     #: the first two terms, so ``valid`` alone would extrapolate the model outside its support.
     min_n_btag_pnet=2,
-    version=2,
+    #: the estimator whose ensemble mean IS the weight, one of TOPO_WEIGHT_CHOICES. See the
+    #: docstring for why this is a directly fitted union rather than the residual decomposition.
+    weight_estimator="or3",
+    version=3,
 )
 def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     """
-    The OR3 arm: the stored OR2 decision plus the emulated TOPO residual.
+    The proposed-menu arm: one directly fitted efficiency, applied as a probability weight.
 
     .. code-block:: text
 
-        w_OR3 = d_OR2 * SF_OR2  +  (1 - d_OR2) * eps_res(c) / (1 - eps_OR2(c))
+        w = eps_<weight_estimator>(c)     in support
+        w = d_OR2                         outside it
 
-    with ``SF_OR2 == 1`` for now (see :py:func:`topo_or2_weights`) and ``eps_res`` the calibrated
-    ensemble mean for the residual target ``TOPO & ~OR2``. The division is not cosmetic -- see the
-    comment at the weight itself; ``eps_res`` is a joint probability, so without it the ``~OR2``
-    condition is applied twice and the TOPO gain comes out several times too small.
+    ``weight_estimator`` defaults to ``or3``, the three-path union ``IsoMu24 | Mu12 | TOPO``
+    fitted as a single target; ``topo`` gives the TOPO path alone, for the menu question that
+    drops the existing legs entirely.
 
-    Two choices that look like details and are not:
+    **Why a single directly fitted target and not the residual decomposition.** The exact identity
+    ``P(OR3) = P(OR2) + P(TOPO & ~OR2)`` lets the stored OR2 bit carry the first, dominant term
+    and a model carry only the small remainder, which is attractive on paper. It is the wrong
+    trade here, for two reasons that both point the same way:
 
-    * **The residual target, not the marginal.** Fitting ``TOPO`` alone and combining by
-      inclusion-exclusion would assume leg factorisation, which the trigger-efficiency study
-      measures and finds does not hold -- TOPO is heavily correlated with the muon leg. Fitting
-      ``TOPO & ~OR2`` assumes nothing.
-    * **A probability weight, not a decision.** ``w = eps``, not ``w = 1{eps > 0.5}``. A threshold
-      is simply biased (``E[1{eps>0.5}] != E[eps]``) and a Bernoulli draw throws away precision for
-      nothing; the probability weight is unbiased in yield and correct in shape.
+    * **Scale factors.** The deliverable applies data efficiencies, so the residual form needs
+      ``SF_OR2`` on a term worth ~86% of the weight -- and ``SF_OR2`` carries the
+      ``Mu12_IsoVVL_PFHT150_PNetBTag0p53`` leg, whose online b-tag requirement is the part of the
+      menu with the widest expected SF spread. In a directly fitted ``or3`` that leg enters only
+      where it is the *sole* path firing, which is a small corner: TOPO alone already reaches
+      92.4% against 93.3% for the union.
+    * **Closure.** The residual form divides by ``1 - eps_OR2``, so it imports the OR2 emulation
+      into a denominator -- and ``mu12`` is measured to be the worst-closing of the three targets
+      that have a stored bit (+2.96 +- 0.76 pp, 3.9 sigma, against +0.99 for ``or2`` and -0.46 for
+      ``isomu24``). A directly fitted ``or3`` does not use ``eps_mu12`` at all.
 
-    Outside the training support the weight falls back to the stored ``d_OR2``, i.e. the TOPO leg
-    is credited with nothing rather than with an extrapolation.
+    Neither route assumes leg factorisation: ``or3`` is fitted on the union bit itself, exactly as
+    ``topo_res`` is fitted on ``TOPO & ~OR2``. The inclusion-exclusion form that *would* assume it
+    is not used anywhere.
+
+    The residual construction is still computed, as ``topo_trigger_weight_built``, because the two
+    routes estimate the same quantity by independent paths and their difference is the sharpest
+    available statement about the emulation -- on 2024 signal they agree to 0.26 pp. It is a
+    cross-check, not the weight.
+
+    **A probability weight, not a decision.** ``w = eps``, not ``w = 1{eps > 0.5}``. A threshold is
+    simply biased (``E[1{eps>0.5}] != E[eps]``) and a Bernoulli draw throws away precision for
+    nothing; the probability weight is unbiased in yield and correct in shape.
+
+    Outside the training support the weight falls back to the stored ``d_OR2``. For ``or3`` that is
+    a floor and not an extrapolation, since ``OR3`` contains ``OR2`` by construction; for ``topo``
+    it is neither a bound nor an estimate, so out-of-support events must be cut on
+    ``topo_in_support`` rather than trusted. The fallback exists so the column is finite.
 
     Besides the weight this writes ``topo_eff_<name>`` and ``topo_eff_<name>_std`` for every
-    estimator in the bundle. Three of the four have a stored decision in Summer24 NanoAODv15 and
-    are emulated *only* so the emulation can be checked against it: ``topo_eff_isomu24`` pairs with
+    estimator in the bundle. Three of the six have a stored decision in Summer24 NanoAODv15 and are
+    emulated *only* so the emulation can be checked against it: ``topo_eff_isomu24`` pairs with
     ``topo_isomu24``, ``topo_eff_or2`` with ``topo_or2``, and ``topo_eff_mu12`` with the stored HLT
-    bit. Only ``topo_res`` is load-bearing, TOPO being the one path absent from the 2024 menu.
+    bit.
     """
     events = self[topo_or2_weights](events, **kwargs)
     # the stored IsoMu24 decision travels alongside, so a single pass writes each emulated
@@ -388,8 +420,32 @@ def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     # faith, because it is precisely what hbw.TopoEmulationClosure measures against the stored bit.
     p_fail = np.clip(1.0 - eff_or2, 1e-6, None)
     eff_cond = np.clip(eff_res / p_fail, 0.0, 1.0)
-    w = np.clip(d_or2 + (1.0 - d_or2) * eff_cond, 0.0, 1.0)
+    w_built = np.clip(d_or2 + (1.0 - d_or2) * eff_cond, 0.0, 1.0)
+    events = set_ak_column(events, "topo_trigger_weight_built", w_built.astype(np.float32))
+
+    # the applied weight: one directly fitted efficiency, so no SF_OR2 rides on a term worth 86%
+    # of the weight and the b-tagged Mu12 leg never reaches a denominator. Outside the support
+    # there is no model, and the stored OR2 decision is the floor.
+    eff_w = np.asarray(ak.to_numpy(events[f"topo_eff_{self.weight_estimator}"]), dtype=np.float64)
+    w = np.where(in_support, np.clip(eff_w, 0.0, 1.0), d_or2)
     events = set_ak_column(events, "topo_trigger_weight", w.astype(np.float32))
+
+    # Internal consistency of estimators that were fitted independently of one another: nothing in
+    # the fit enforces OR3 >= OR2 or OR3 >= TOPO, yet both hold by construction of the targets. The
+    # violation rate is therefore a direct, assumption-free measure of how far the six estimators
+    # are from being mutually coherent, and it costs one comparison.
+    if in_support.any():
+        eff_topo = np.asarray(ak.to_numpy(events.topo_eff_topo), dtype=np.float64)[in_support]
+        eff_or3 = np.asarray(ak.to_numpy(events.topo_eff_or3), dtype=np.float64)[in_support]
+        n_sup = int(in_support.sum())
+        bad_or2 = int((eff_or3 < eff_or2[in_support]).sum())
+        bad_topo = int((eff_or3 < eff_topo).sum())
+        if bad_or2 or bad_topo:
+            logger.info(
+                f"estimator ordering violated on {bad_or2} ({100 * bad_or2 / n_sup:.2f}%) events "
+                f"for eps_OR3 >= eps_OR2 and {bad_topo} ({100 * bad_topo / n_sup:.2f}%) for "
+                f"eps_OR3 >= eps_TOPO; both are exact for the targets, so this is emulation noise",
+            )
 
     return events
 
@@ -441,6 +497,13 @@ def topo_or3_weights_setup(self: Producer, reqs: dict, **kwargs) -> None:
     missing = set(TOPO_ESTIMATORS) - set(bundle["estimators"])
     if missing:
         raise ValueError(f"topo ensemble bundle {path} is missing estimators {sorted(missing)}")
+
+    if self.weight_estimator not in TOPO_WEIGHT_CHOICES:
+        raise ValueError(
+            f"weight_estimator {self.weight_estimator!r} is not one of {TOPO_WEIGHT_CHOICES}; "
+            f"note that {TOPO_RESIDUAL_ESTIMATOR!r} is a residual and not an efficiency, so it "
+            f"cannot be a weight on its own",
+        )
 
     self.topo_eps = float(bundle["eps"])
     self.topo_meta = bundle["provenance"]
