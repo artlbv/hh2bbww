@@ -33,6 +33,19 @@ PRODUCERS="topo_or3_weights"
 HIST_PRODUCER="topo_closure"
 CATEGORIES="${TOPO_CLOSURE_CATEGORIES:-1mu}"
 
+# law's --version, which is a SEGMENT OF THE OUTPUT STORE PATH and therefore decides what this run
+# can reuse. Empty means "let hbw pick", which is its analysis default -- prod3. That is right
+# wherever the store was also built under the default and catastrophically wasteful where it was
+# not: the NAF's tree is under "topo1", and running there without this produced
+#   .../sel__sl1_topoV0/prod3/...   against a store holding
+#   .../sel__sl1_topoV0/topo1/...
+# with the same calibrator hash and the same selector. law does not warn that it is about to
+# regenerate everything upstream; it just starts. On c24v15 that is 38546 branches through
+# Calibrate, Select and Reduce for data already on disk.
+#
+#   TOPO_CLOSURE_VERSION=topo1 bash hbw/scripts/topo_closure.sh full
+VERSION="${TOPO_CLOSURE_VERSION:-}"
+
 DATASETS="dy_ee_m10to50_amcatnlo,dy_ee_m50toinf_0j_amcatnlo,dy_ee_m50toinf_1j_amcatnlo,\
 dy_ee_m50toinf_2j_amcatnlo,dy_ee_m50toinf_amcatnlo,dy_mumu_m10to50_amcatnlo,\
 dy_mumu_m50toinf_0j_amcatnlo,dy_mumu_m50toinf_1j_amcatnlo,dy_mumu_m50toinf_2j_amcatnlo,\
@@ -97,5 +110,6 @@ law run hbw.TopoEmulationClosure \
     --categories "$CATEGORIES" \
     --datasets "$DATASETS" \
     --processes "$PROCESSES" \
+    ${VERSION:+--version "$VERSION"} \
     "${EXTRA[@]}" \
     "$@"
