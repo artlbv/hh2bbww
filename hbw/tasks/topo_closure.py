@@ -633,21 +633,39 @@ class TopoEmulationClosure(
                             continue
 
                         if kind == "gain":
-                            # the constructed OR3 against the stored OR2 it is built on, with the
-                            # acceptance it buys underneath
+                            # the APPLIED weight -- in support that is exactly the directly fitted
+                            # or3 -- against the OR2 it has to beat, with the acceptance it buys
+                            # underneath. The built construction is drawn faintly beside it: it is
+                            # no longer applied, and the visible gap between the two solid and
+                            # dotted lines IS the built-fit number quoted in the summary.
                             stored = r["estimators"]["or2"]["eff_direct"][inner]
+                            applied = r["estimators"]["or3"]["eff_emulated"][inner]
                             built = r["or3_built"][inner]
+                            ax.stairs(np.where(mask, applied, np.nan), edges, baseline=None,
+                                      color=c, label=f"{group} (OR3 applied)")
                             ax.stairs(np.where(mask, built, np.nan), edges, baseline=None,
-                                      color=c, ls="--", label=f"{group} (OR3 built)")
+                                      color=c, ls=":", lw=0.9, alpha=0.7,
+                                      label=f"{group} (OR3 built)")
                             ax.errorbar(
                                 centres[mask], stored[mask],
                                 yerr=r["estimators"]["or2"]["eff_direct_err"][inner][mask],
                                 fmt="o", ms=3, color=c, label=f"{group} (OR2 stored)",
                             )
+                            # both gains, nudged apart in x so the much smaller error on the
+                            # model-vs-model one stays readable where they overlap
+                            dx = 0.15 * np.diff(edges)
                             rax.errorbar(
-                                centres[mask], 100 * r["gain"][inner][mask],
+                                (centres - dx)[mask], 100 * r["gain"][inner][mask],
                                 yerr=100 * r["gain_err"][inner][mask], fmt="o", ms=3, color=c,
+                                label=f"{group} (vs stored)",
                             )
+                            rax.errorbar(
+                                (centres + dx)[mask], 100 * r["gain_emu"][inner][mask],
+                                yerr=100 * r["gain_emu_err"][inner][mask], fmt="s", ms=3,
+                                mfc="none", color=c, label=f"{group} (vs emulated)",
+                            )
+                            if k == 0:
+                                rax.legend(fontsize=4, ncol=2, loc="upper right")
                             continue
 
                         e = r["estimators"][est]
@@ -682,7 +700,7 @@ class TopoEmulationClosure(
                     title = {
                         "closure": est,
                         "predict": f"{est}  (no truth: prediction)",
-                        "gain": "OR3 built vs OR2 stored",
+                        "gain": "OR3 applied vs OR2",
                     }[kind]
                     ax.set_title(title, fontsize=7)
                     ax.set_ylim(-0.05, 1.25)
