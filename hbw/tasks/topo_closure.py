@@ -436,102 +436,122 @@ class TopoEmulationClosure(
             groups[_group_of(d)].append(d)
         colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 
+        #: quantities that are averages over events and therefore combine across datasets as an
+        #: N-weighted mean. ``delta_err`` is not among them: it is an error and adds in quadrature.
+        mean_keys = ("eff_direct", "eff_direct_err", "eff_emulated", "delta", "model_std")
+
         def combine(members, variable):
-            """Sum the raw arm sums over the members of a family, then take the ratios."""
-            acc = None
+            """N-weighted mean of the per-dataset quantities over one sample family."""
+            n_tot, acc, var = None, defaultdict(lambda: defaultdict(float)), defaultdict(float)
             for m in members:
                 r = differential[m][variable]
                 n = np.asarray(r["n"], dtype=float)
-                if acc is None:
-                    acc = {"n": np.zeros_like(n), "est": defaultdict(lambda: defaultdict(float))}
-                acc["n"] = acc["n"] + n
+                n_tot = n if n_tot is None else n_tot + n
                 for est, e in r["estimators"].items():
-                    for key in ("eff_direct", "eff_emulated", "delta", "model_std"):
-                        acc["est"][est][key] = acc["est"][est][key] + np.nan_to_num(
-                            np.asarray(e[key], dtype=float),
-                        ) * n
-                    # variance adds as n^2 * sigma^2
-                    acc["est"][est]["var"] = acc["est"][est]["var"] + np.nan_to_num(
-                        np.asarray(e["delta_err"], dtype=float),
-                    ) ** 2 * n ** 2
-            safe = np.where(acc["n"] > 0, acc["n"], np.nan)
-            res = {"n": acc["n"], "estimators": {}}
-            for est, vals in acc["est"].items():
-                res["estimators"][est] = {
-                    k: vals[k] / safe for k in ("eff_direct", "eff_emulated", "delta", "model_std")
-                }
-                res["estimators"][est]["delta_err"] = np.sqrt(vals["var"]) / safe
+                    for key in mean_keys:
+                        acc[est][key] = acc[est][key] + np.nan_to_num(np.asarray(e[key], dtype=float)) * n
+                    var[est] = var[est] + np.nan_to_num(np.asarray(e["delta_err"], dtype=float)) ** 2 * n ** 2
+            safe = np.where(n_tot > 0, n_tot, np.nan)
+            res = {"n": n_tot, "estimators": {}}
+            for est in acc:
+                res["estimators"][est] = {k: acc[est][k] / safe for k in mean_keys}
+                res["estimators"][est]["delta_err"] = np.sqrt(var[est]) / safe
             return res
 
+        ests = list(TOPO_CLOSURE_TARGETS) + list(TOPO_PREDICTION_ONLY)
         pdf_path = out.child("topo_closure.pdf", type="f").abspath
         with PdfPages(pdf_path) as pdf:
             for variable in variables:
                 var_inst = self.config_inst.get_variable(variable)
                 edges = np.asarray(var_inst.bin_edges, dtype=float)
                 centres = 0.5 * (edges[:-1] + edges[1:])
+                # values(flow=True) is [underflow, bins..., overflow]; drop both ends for the plot,
+                # they are in the JSON and in the integrated numbers
+                inner = slice(1, len(edges))
 
-                ests = list(TOPO_CLOSURE_TARGETS) + list(TOPO_PREDICTION_ONLY)
                 fig, axes = plt.subplots(
-                    2, len(ests), figsize=(4.2 * len(ests), 6.4), sharex="col",
+                    2, len(ests), figsize=(3.6 * len(ests), 5.6), sharex="col",
                     gridspec_kw={"height_ratios": [2, 1]},
                 )
                 for j, est in enumerate(ests):
                     ax, rax = axes[0][j], axes[1][j]
+                    predicted_only = est in TOPO_PREDICTION_ONLY
                     for k, (group, members) in enumerate(sorted(groups.items())):
                         c = colors[k % len(colors)]
                         r = combine(members, variable)
                         e = r["estimators"][est]
-                        # drop underflow/overflow for the plot; they are in the JSON
-                        sl = slice(1, len(edges))
-                        n = r["n"][sl]
-                        ok = n >= self.min_bin_events
-                        if not ok.any():
+                        mask = r["n"][inner] >= self.min_bin_events
+                        if not mask.any():
                             continue
-                        mask = ok[:len(centres)]
-                        ax.errorbar(
-                            centres[mask], e["eff_direct"][sl][:len(centres)][mask],
-                            yerr=None, fmt="o", ms=3, color=c, label=f"{group} (stored)",
-                        )
-                        ax.step(
-                            edges[:-1][mask], e["eff_emulated"][sl][:len(centres)][mask],
-                            where="post", color=c, ls="--", label=f"{group} (emulated)",
-                        )
-                        d = 100 * e["delta"][sl][:len(centres)][mask]
-                        de = 100 * e["delta_err"][sl][:len(centres)][mask]
-                        rax.errorbar(centres[mask], d, yerr=de, fmt="o", ms=3, color=c)
-                    ax.set_title(est)
-                    ax.set_ylim(-0.05, 1.15)
+                        emu = e["eff_emulated"][inner]
+                        spread = e["model_std"][inner]
+                        # the emulated efficiency is a per-bin average, so draw it as a step over
+                        # the bin it belongs to rather than as a line through bin centres
+                        # baseline=None keeps stairs from closing down to zero at the ends, which
+                        # would draw a vertical line that reads as a real drop in efficiency
+                        ax.stairs(np.where(mask, emu, np.nan), edges, baseline=None, color=c,
+                                  ls="--", label=f"{group} (emulated)")
+                        ax.stairs(np.where(mask, emu + spread, np.nan), edges,
+                                  baseline=np.where(mask, emu - spread, np.nan),
+                                  fill=True, alpha=0.15, color=c)
+                        if not predicted_only:
+                            ax.errorbar(
+                                centres[mask], e["eff_direct"][inner][mask],
+                                yerr=e["eff_direct_err"][inner][mask],
+                                fmt="o", ms=3, color=c, label=f"{group} (stored)",
+                            )
+                            rax.errorbar(
+                                centres[mask], 100 * e["delta"][inner][mask],
+                                yerr=100 * e["delta_err"][inner][mask],
+                                fmt="o", ms=3, color=c,
+                            )
+                        else:
+                            # no truth exists for this one; the band is the model's own spread
+                            rax.errorbar(
+                                centres[mask], 100 * spread[mask], yerr=None,
+                                fmt="o", ms=3, color=c,
+                            )
+                    ax.set_title(est + ("  (no truth: prediction only)" if predicted_only else ""),
+                                 fontsize=8)
+                    ax.set_ylim(-0.05, 1.25)
                     ax.set_ylabel("efficiency")
                     rax.axhline(0.0, color="k", lw=0.8)
-                    rax.set_ylabel("emu - stored [pp]")
+                    rax.set_ylabel("ensemble spread [pp]" if predicted_only else "emu - stored [pp]")
                     rax.set_xlabel(var_inst.x_title)
                     if j == 0:
                         ax.legend(fontsize=5, ncol=2, loc="lower right")
                 fig.suptitle(
-                    f"{self.config_inst.name} -- {variable} -- in-support events, "
-                    f"N >= {self.min_bin_events} per bin",
-                    fontsize=9,
+                    f"{self.config_inst.name} | {variable} | categories {','.join(self.categories)} | "
+                    f"in-support events, N >= {self.min_bin_events} per bin",
+                    fontsize=8,
                 )
                 fig.tight_layout()
                 pdf.savefig(fig)
                 plt.close(fig)
 
             # the per-sample summary: integrated residual for every dataset
-            fig, axes = plt.subplots(1, len(TOPO_CLOSURE_TARGETS),
-                                     figsize=(4.2 * len(TOPO_CLOSURE_TARGETS), 0.22 * len(datasets) + 2),
-                                     sharey=True)
+            targets = list(TOPO_CLOSURE_TARGETS)
+            fig, axes = plt.subplots(
+                1, len(targets), figsize=(3.6 * len(targets), 0.22 * len(datasets) + 2), sharey=True,
+            )
+            axes = np.atleast_1d(axes)
             ypos = np.arange(len(datasets))
-            for j, est in enumerate(TOPO_CLOSURE_TARGETS):
-                ax = axes[j] if len(TOPO_CLOSURE_TARGETS) > 1 else axes
+            for j, est in enumerate(targets):
                 d = np.array([100 * float(integrated[x]["estimators"][est]["delta"]) for x in datasets])
-                e = np.array([100 * float(integrated[x]["estimators"][est]["delta_err"]) for x in datasets])
-                ax.errorbar(d, ypos, xerr=e, fmt="o", ms=3)
-                ax.axvline(0.0, color="k", lw=0.8)
-                ax.set_title(est)
-                ax.set_xlabel("integrated emu - stored [pp]")
-            (axes[0] if len(TOPO_CLOSURE_TARGETS) > 1 else axes).set_yticks(ypos)
-            (axes[0] if len(TOPO_CLOSURE_TARGETS) > 1 else axes).set_yticklabels(datasets, fontsize=5)
-            fig.suptitle(f"{self.config_inst.name} -- integrated closure per sample", fontsize=9)
+                err = np.array([100 * float(integrated[x]["estimators"][est]["delta_err"]) for x in datasets])
+                colour = ["tab:red" if abs(v) > 3 * s else "tab:blue"
+                          for v, s in zip(d, np.where(err > 0, err, np.nan))]
+                axes[j].errorbar(d, ypos, xerr=err, fmt="none", ecolor="grey", lw=1)
+                axes[j].scatter(d, ypos, s=10, c=colour)
+                axes[j].axvline(0.0, color="k", lw=0.8)
+                axes[j].set_title(est, fontsize=8)
+                axes[j].set_xlabel("integrated emu - stored [pp]", fontsize=7)
+            axes[0].set_yticks(ypos)
+            axes[0].set_yticklabels(datasets, fontsize=5)
+            fig.suptitle(
+                f"{self.config_inst.name} | integrated closure per sample | red = |pull| > 3",
+                fontsize=8,
+            )
             fig.tight_layout()
             pdf.savefig(fig)
             plt.close(fig)
