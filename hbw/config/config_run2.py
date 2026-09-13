@@ -1378,6 +1378,25 @@ def add_config(
         # isolations for testing
         "Electron.{pfRelIso03_all,miniPFRelIso_all,mvaIso,mvaTTH,promptMVA}",
         "Muon.{pfRelIso03_all,miniPFRelIso_all,mvaMuID,mvaTTH,promptMVA}",
+        # promptMVA input features, for the TOPO non-prompt trigger study.
+        # Muon_promptMVA (mu_BDTG_2022.weights.xml, PhysicsTools/NanoAOD/python/muons_cff.py:105)
+        # is a TMVA BDTG over 13 inputs. It is the strongest single addition found in the
+        # feature ladder, but it is a frozen 2022 training applied to Summer24, so we keep its
+        # INPUTS as well in order to study them directly instead of inheriting the BDT.
+        # Mapping input -> branch (numbering follows muons_cff.py):
+        #   1 pt, 2 eta, 3 pfRelIso03_all, 9 jetPtRatio (= 1/(1+jetRelIso)),
+        #   11 dxy, 12 dz, 5 miniPFRelIso_all   -- already kept above
+        #   4 miniPFRelIso_chg, 6 jetNDauCharged, 7 jetPtRelv2, 10 sip3d, 13 segmentComp -- added here
+        #   8 jetDF  -- NOT directly available: it is the DeepFlavour b-score of the muon's HOST
+        #               jet, reachable only through jetIdx into the *uncleaned* nano Jet
+        #               collection. jetIdx is kept below, but note that hbw/selection/jet.py:76-77
+        #               removes jets within dR<0.4 of a selected muon, so the host jet is
+        #               normally NOT in the reduced Jet collection and the index will not
+        #               resolve downstream. Input 8 needs resolving at selection time.
+        "Muon.{miniPFRelIso_chg,jetNDauCharged,jetPtRelv2,sip3d,segmentComp,jetIdx}",
+        # HLT-isolation-adjacent variables (tracker / charged-only), for the separate question
+        # of which offline isolation is closest to the three HLT isolations.
+        "Muon.{tkRelIso,pfRelIso03_chg,ip3d}",
         # Taus
         "VetoTau.{pt,eta,phi,mass,decayMode}",
         # MET
