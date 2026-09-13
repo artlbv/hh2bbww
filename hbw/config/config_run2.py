@@ -1219,6 +1219,18 @@ def add_config(
     model_path = f"{hbw_ext_base}/models"
     add_external("nlo_reweight_model", (f"{model_path}/fineTunedEnsemble_64.onnx", "v0"))
 
+    # TOPO trigger-efficiency ensemble (SL only): the K=20 calibrated XGBoost+Platt estimators
+    # of the trigger-efficiency study, exported as one gzipped JSON bundle and evaluated by
+    # hbw.production.topo_trigger.topo_or3_weights.
+    #
+    # NOTE the "_hhmc_poc_" in the name: this bundle is fitted IN-DOMAIN ON HH SIGNAL MC, which
+    # makes the emulated-vs-stored closure test meaningful but is NOT the deliverable estimator,
+    # which is trained on electron-free, MET-referenced JetMET *data*. Swapping it in is a file
+    # swap plus a version bump here -- no code change -- as long as the bundle's feature_order and
+    # presel still match; the producer asserts the former on load.
+    if cfg.has_tag("is_sl"):
+        add_external("topo_ensemble", (f"{model_path}/topo_ens_K20_hhmc_poc_v1.json.gz", "v1"))
+
     # V+jets reweighting (derived for 13 TeV, custom json converted from ROOT, not centrally produced)
     # ROOT files (eej.root and aj.root) taken from here:
     # https://github.com/UHH2/2HDM/tree/ultra_legacy/data/ScaleFactors/VJetsCorrections
