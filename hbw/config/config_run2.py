@@ -1219,6 +1219,18 @@ def add_config(
     model_path = f"{hbw_ext_base}/models"
     add_external("nlo_reweight_model", (f"{model_path}/fineTunedEnsemble_64.onnx", "v0"))
 
+    # TOPO trigger-efficiency ensemble (SL only): the K=20 calibrated XGBoost+Platt estimators
+    # of the trigger-efficiency study, exported as one gzipped JSON bundle and evaluated by
+    # hbw.production.topo_trigger.topo_or3_weights.
+    #
+    # NOTE the "_hhmc_poc_" in the name: this bundle is fitted IN-DOMAIN ON HH SIGNAL MC, which
+    # makes the emulated-vs-stored closure test meaningful but is NOT the deliverable estimator,
+    # which is trained on electron-free, MET-referenced JetMET *data*. Swapping it in is a file
+    # swap plus a version bump here -- no code change -- as long as the bundle's feature_order and
+    # presel still match; the producer asserts the former on load.
+    if cfg.has_tag("is_sl"):
+        add_external("topo_ensemble", (f"{model_path}/topo_ens_K20_hhmc_poc_v1.json.gz", "v1"))
+
     # V+jets reweighting (derived for 13 TeV, custom json converted from ROOT, not centrally produced)
     # ROOT files (eej.root and aj.root) taken from here:
     # https://github.com/UHH2/2HDM/tree/ultra_legacy/data/ScaleFactors/VJetsCorrections
@@ -1493,7 +1505,14 @@ def add_config(
                 nonlocal _splitter
                 if _splitter is None:
                     from columnflow.util import load_correction_set
-                    splitter_path = f"{hbw_ext_base}/jsons/mc_event_splitter.json.gz"
+                    # Tracked in this repository rather than under hbw_external_base. This file
+                    # is not a correction: it DEFINES which simulated events each year's
+                    # analysis may use, so a change to it changes every number downstream. It
+                    # is 668 bytes, it does not vary by site or campaign, and it needs the
+                    # review, history and blame that version control gives. Reading it from the
+                    # repository also means it ships with the code to worker nodes, rather than
+                    # relying on /data/dust being mounted there.
+                    splitter_path = os.path.join(thisdir, "jsons", "mc_event_splitter.json.gz")
                     _splitter = load_correction_set(splitter_path)["mc_event_splitter"]
                     logger.info_once(f"MC splitting is enabled for {cfg.campaign.x.year} (using {splitter_path}).")
                 return _splitter.evaluate(events.event) == cfg.campaign.x.year

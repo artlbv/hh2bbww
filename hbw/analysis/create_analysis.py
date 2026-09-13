@@ -54,6 +54,11 @@ def create_hbw_analysis(
         # "$CF_BASE/sandboxes/venv_ml_tf.sh",
         "$HBW_BASE/sandboxes/venv_ml_plotting.sh",
         "$HBW_BASE/sandboxes/venv_onnx.sh",
+        # topo_or3_weights evaluates the xgboost ensemble, so ProduceColumns runs inside
+        # venv_topo. Local workers reach the sandbox directly, but a remote job only receives the
+        # sandboxes listed here -- without it every batch ProduceColumns dies at stage-in with
+        # "bash sandbox 'venv_topo' not found in job configuration" (job exit 60, task exit 40).
+        "$HBW_BASE/sandboxes/venv_topo.sh",
     ]
 
     # cmssw sandboxes that should be bundled for remote jobs in case they are needed

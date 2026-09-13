@@ -22,6 +22,12 @@ action() {
     ret="$?"
     [ "${gret}" = "0" ] && gret="${ret}"
 
+    # test_topo_closure
+    echo
+    bash "${this_dir}/run_test" test_topo_closure "${cf_dir}/sandboxes/venv_columnar${dev}.sh"
+    ret="$?"
+    [ "${gret}" = "0" ] && gret="${ret}"
+
     return "${gret}"
 }
 action "$@"
