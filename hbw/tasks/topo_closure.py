@@ -428,6 +428,13 @@ class TopoEmulationClosure(
                 v: [float(e) for e in self.config_inst.get_variable(v).bin_edges]
                 for v in variables
             },
+            # Every per-bin array under "differential" is values(flow=True), so it is ONE ENTRY
+            # LONGER than bin_edges has bins: index 0 is the underflow, index i is bin i-1. That
+            # matters because EMPTY_FLOAT is finite and lands in underflow rather than being
+            # dropped, so the flow bin is real content and not padding. Aligning these arrays
+            # against bin_edges without the shift silently moves every bin by one, which looks
+            # entirely plausible -- on a b-tag multiplicity it reads as a different b-tag cut.
+            "differential_flow_offset": 1,
         }
         self.output()["json"].dump(payload, formatter="json", indent=2)
 
