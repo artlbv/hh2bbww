@@ -300,6 +300,14 @@ class TopoEmulationClosure(
                     np.asarray(n_all) ** 2 / np.asarray(n_all_var),
                     0.0,
                 ),
+                # NOTE this ratio has a b-tag-SELECTED numerator over an INCLUSIVE denominator, so
+                # a per-event b-tag scale factor does NOT divide out of it. The config carries
+                # skip_btag_weights on every config (and hbw skips btag_weights for 2024 anyway),
+                # which is defended on the grounds that the SF cancels in a ratio over one and the
+                # same event set -- true for the efficiency comparisons below, which share a
+                # denominator, and not true here. Percent-level, and second order to the effective
+                # statistics under any weighting, but it is a bias with a direction rather than
+                # noise, and it lands on the support fraction specifically.
                 "in_support_frac": np.where(np.asarray(n_all) > 0, np.asarray(n) / np.asarray(n_all), np.nan),
                 "unit_weights": unit_weights,
                 "estimators": {},
@@ -435,6 +443,12 @@ class TopoEmulationClosure(
             "config": config,
             "categories": list(self.categories),
             "hist_producer": self.hist_producer,
+            # what the per-event weight actually contains, so a reader does not have to infer it
+            # from the hist producer name. None means unit weights. The yield-level twin uses
+            # dataset_normalization_weight, which is mc_weight * lumi * xs / sum_weights and
+            # NOTHING else -- no b-tag scale factor, no pileup, no scale or PDF weight. See the
+            # note on in_support_frac for the one place that absence does not cancel.
+            "weight_column": getattr(self.hist_producer_inst, "weight_column", None),
             "min_bin_events": self.min_bin_events,
             "datasets": datasets,
             # datasets that were requested but carry no events in the requested category; recorded
