@@ -29,8 +29,23 @@ shift || true
 
 ANALYSIS="hbw.analysis.hbw_sl.hbw_sl"
 SELECTOR="sl1_topo"
-PRODUCERS="topo_or3_weights"
-HIST_PRODUCER="topo_closure"
+# The yield-level twin is a two-line switch:
+#
+#   TOPO_CLOSURE_HIST_PRODUCER=topo_closure_norm \
+#   TOPO_CLOSURE_PRODUCERS=topo_or3_weights,dataset_normalization_weight \
+#       bash hbw/scripts/topo_closure.sh limited
+#
+# It costs one extra ProduceColumns pass (dataset_normalization_weight is cheap -- mc_weight times
+# lumi times xs over the already-merged selection stats) plus a full CreateHistograms, because the
+# producer list is part of the store path. Reduction and selection are untouched.
+#
+# What it buys and what it loses: the per-bin efficiencies stay meaningful, because both arms of a
+# bin carry the same weight, so support fractions and efficiencies become yield-weighted. The
+# PAIRED ERROR DOES NOT SURVIVE -- the std(f - y)/sqrt(N) identity needs unit weights -- so the
+# reading task detects sum(w) != sum(w^2) and blanks every error and pull. Use the weighted run for
+# composition questions and the unweighted one for anything quoting a significance.
+PRODUCERS="${TOPO_CLOSURE_PRODUCERS:-topo_or3_weights}"
+HIST_PRODUCER="${TOPO_CLOSURE_HIST_PRODUCER:-topo_closure}"
 CATEGORIES="${TOPO_CLOSURE_CATEGORIES:-1mu}"
 
 # law's --version, which is a SEGMENT OF THE OUTPUT STORE PATH and therefore decides what this run

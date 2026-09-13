@@ -18,6 +18,7 @@ from hbw.weight.topo_closure import (
 from hbw.production.topo_trigger import (
     TOPO_ESTIMATORS, TOPO_RESIDUAL_ESTIMATOR, TOPO_WEIGHT_CHOICES, topo_or3_weights,
 )
+from hbw.tasks.topo_closure import DIFFERENTIAL_FLOW_OFFSET
 
 import order as od
 
@@ -107,6 +108,53 @@ class TopoClosureTest(unittest.TestCase):
 
         self.assertEqual(float(h.values(flow=True).sum()), 3.0)
         self.assertEqual(float(h.values(flow=False).sum()), 2.0)
+
+    def test_differential_flow_offset(self):
+        """
+        Every per-bin array the task publishes is ``values(flow=True)``, so it is one entry longer
+        than ``bin_edges`` has bins and index 0 is the underflow.
+
+        On an integer-binned axis this reads as ``k -> index k + 1``. Getting it wrong does not
+        raise and does not look wrong: the columns simply shift, and on a b-tag multiplicity a
+        shifted table is indistinguishable from a table taken at a different b-tag cut. The check
+        that catches it is an independently known quantity, so this pins the offset against the
+        exact axis the b-tag breakdown is read off.
+        """
+        # the binning of topo_n_btag_pnet: integers 0..6 on half-integer edges
+        n_btag_bins = 7
+        var_inst = od.Variable(
+            name="topo_n_btag_pnet",
+            expression="topo_n_btag_pnet",
+            binning=(n_btag_bins, -0.5, n_btag_bins - 0.5),
+        )
+        h = create_hist_from_variables(var_inst, weight=True)
+
+        # a known multiplicity spectrum, plus one undefined entry that must land in underflow
+        counts = {0: 3.0, 1: 11.0, 2: 17.0, 3: 5.0}
+        x = np.concatenate([np.full(int(c), float(k)) for k, c in counts.items()] +
+                           [np.array([-99999.0])])
+        h.fill(topo_n_btag_pnet=x, weight=np.ones(len(x)))
+
+        values = h.values(flow=True)
+        edges = h.axes[0].edges
+
+        # the layout claim itself: one underflow plus one overflow around len(edges) - 1 real bins
+        self.assertEqual(len(values), len(edges) - 1 + 2)
+        self.assertEqual(DIFFERENTIAL_FLOW_OFFSET, 1)
+        self.assertEqual(float(values[0]), 1.0)  # the EMPTY_FLOAT entry, not a zero-b-tag event
+
+        for k, c in counts.items():
+            self.assertEqual(float(values[k + DIFFERENTIAL_FLOW_OFFSET]), c)
+
+        # and the aggregate the b-tag breakdown actually quotes
+        n_total = sum(counts.values())
+        p_ge2 = sum(float(values[k + DIFFERENTIAL_FLOW_OFFSET])
+                    for k in range(2, n_btag_bins)) / n_total
+        self.assertAlmostEqual(p_ge2, (counts[2] + counts[3]) / n_total, places=12)
+
+        # the failure this guards against: read without the offset, 0b picks up the sentinel and
+        # every column slides by one, which is a plausible-looking table and not an error
+        self.assertNotEqual(float(values[0]), counts[0])
 
 
 if __name__ == "__main__":

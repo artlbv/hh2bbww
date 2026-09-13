@@ -72,6 +72,14 @@ np = maybe_import("numpy")
 
 logger = law.logger.get_logger(__name__)
 
+#: How far the per-bin arrays under "differential" are shifted against ``bin_edges``.
+#:
+#: They are ``values(flow=True)``, so the layout is ``[underflow, bins..., overflow]`` and bin ``i``
+#: sits at index ``i + 1``. On an integer-binned axis such as ``topo_n_btag_pnet`` that reads
+#: directly as ``k b-tags -> index k + 1``. Published in the JSON so an external reader does not
+#: have to know the convention; pinned in ``tests/test_topo_closure.py`` so it cannot drift.
+DIFFERENTIAL_FLOW_OFFSET = 1
+
 
 #: the estimator inputs plus their two companions. These are the variables the model actually sees,
 #: so a failure that is localised in one of them points at the model; a failure that is flat in all
@@ -268,7 +276,7 @@ class TopoEmulationClosure(
         because ``hist``'s Weight storage accumulates the square of whatever it is filled with.
         """
         h = self._select_categories(h)
-        n_all, _ = self._arm(h, "den_all", flow)
+        n_all, n_all_var = self._arm(h, "den_all", flow)
         n, n_var = self._arm(h, "den", flow)
 
         # the paired-error identity only holds for unit event weights, where sum(w) == sum(w^2)
@@ -278,6 +286,20 @@ class TopoEmulationClosure(
             out = {
                 "n_all": np.asarray(n_all),
                 "n": np.asarray(n),
+                # sum(w^2) alongside sum(w), so a weighted run can be read for what it is worth.
+                # With unit weights these are the same array and carry nothing; under
+                # dataset_normalization_weight they give the effective statistics behind every
+                # number here, N_eff = sum(w)^2 / sum(w^2). That matters because a yield can be
+                # enormous and still rest on a handful of events -- low-pt QCD divides a huge cross
+                # section among very few survivors -- and a weighted fraction quoted without N_eff
+                # looks exactly as precise as one that is not.
+                "n_var": np.asarray(n_var),
+                "n_all_var": np.asarray(n_all_var),
+                "n_all_eff": np.where(
+                    np.asarray(n_all_var) > 0,
+                    np.asarray(n_all) ** 2 / np.asarray(n_all_var),
+                    0.0,
+                ),
                 "in_support_frac": np.where(np.asarray(n_all) > 0, np.asarray(n) / np.asarray(n_all), np.nan),
                 "unit_weights": unit_weights,
                 "estimators": {},
@@ -434,7 +456,7 @@ class TopoEmulationClosure(
             # dropped, so the flow bin is real content and not padding. Aligning these arrays
             # against bin_edges without the shift silently moves every bin by one, which looks
             # entirely plausible -- on a b-tag multiplicity it reads as a different b-tag cut.
-            "differential_flow_offset": 1,
+            "differential_flow_offset": DIFFERENTIAL_FLOW_OFFSET,
         }
         self.output()["json"].dump(payload, formatter="json", indent=2)
 
