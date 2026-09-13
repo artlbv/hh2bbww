@@ -1229,7 +1229,7 @@ def add_config(
     # swap plus a version bump here -- no code change -- as long as the bundle's feature_order and
     # presel still match; the producer asserts the former on load.
     if cfg.has_tag("is_sl"):
-        add_external("topo_ensemble", (f"{model_path}/topo_ens_K20_hhmc_poc_v0.json.gz", "v0"))
+        add_external("topo_ensemble", (f"{model_path}/topo_ens_K20_hhmc_poc_v1.json.gz", "v1"))
 
     # V+jets reweighting (derived for 13 TeV, custom json converted from ROOT, not centrally produced)
     # ROOT files (eej.root and aj.root) taken from here:
@@ -1486,7 +1486,14 @@ def add_config(
                 nonlocal _splitter
                 if _splitter is None:
                     from columnflow.util import load_correction_set
-                    splitter_path = f"{hbw_ext_base}/jsons/mc_event_splitter.json.gz"
+                    # Tracked in this repository rather than under hbw_external_base. This file
+                    # is not a correction: it DEFINES which simulated events each year's
+                    # analysis may use, so a change to it changes every number downstream. It
+                    # is 668 bytes, it does not vary by site or campaign, and it needs the
+                    # review, history and blame that version control gives. Reading it from the
+                    # repository also means it ships with the code to worker nodes, rather than
+                    # relying on /data/dust being mounted there.
+                    splitter_path = os.path.join(thisdir, "jsons", "mc_event_splitter.json.gz")
                     _splitter = load_correction_set(splitter_path)["mc_event_splitter"]
                     logger.info_once(f"MC splitting is enabled for {cfg.campaign.x.year} (using {splitter_path}).")
                 return _splitter.evaluate(events.event) == cfg.campaign.x.year

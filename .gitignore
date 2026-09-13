@@ -36,3 +36,9 @@ data
 .setups
 *~
 *.ipynb*
+
+# hbw/config/jsons/ holds small configuration files that are meant to be tracked
+# (see hbw/config/jsons/README.md). The *.json rule above would silently drop an
+# uncompressed one, and a user-level global ignore of *.gz can hide the
+# compressed ones -- both have already happened once. Keep this negation.
+!hbw/config/jsons/
