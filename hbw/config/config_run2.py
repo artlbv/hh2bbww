@@ -1388,6 +1388,14 @@ def add_config(
         "{Electron,Muon}.{pt,eta,phi,mass,charge,pdgId,jetRelIso,is_tight,dxy,dz}",
         "Electron.{deltaEtaSC,r9,seedGain}", "mll",
         # isolations for testing
+        # NOTE ON mvaTTH -- IT IS DEAD IN c24v15 AND IS KEPT ANYWAY, DELIBERATELY.
+        # Muon_mvaTTH does not exist in RunIII2024Summer24NanoAODv15 (verified against a
+        # source file: 77 Muon_* branches, not among them) and columnflow drops the pattern
+        # silently, so on c24v15 it is a no-op. It is NOT removed because this keep_columns
+        # block is shared by every campaign create_analysis.py registers -- c22*/c23* at
+        # NanoAOD v12 and v14 as well as c24v15/c25v15/c26v15 -- and mvaTTH is a real branch
+        # in the v12 era, where promptMVA does not yet supersede it. Removing it on c24v15
+        # evidence alone would silently stop keeping a used column for those campaigns.
         "Electron.{pfRelIso03_all,miniPFRelIso_all,mvaIso,mvaTTH,promptMVA}",
         "Muon.{pfRelIso03_all,miniPFRelIso_all,mvaMuID,mvaTTH,promptMVA}",
         # promptMVA input features, for the TOPO non-prompt trigger study.
@@ -1441,6 +1449,16 @@ def add_config(
         "HLT.Mu12_TrkIsoVVL_Ele23_CaloIdL_TrackIdL_IsoVL_DZ",
         "HLT.Mu8_TrkIsoVVL_Ele23_CaloIdL_TrackIdL_IsoVL_DZ",
         "HLT.Mu23_TrkIsoVVL_Ele12_CaloIdL_TrackIdL_IsoVL",
+        # Low-threshold single-muon reference paths, for the TOPO non-prompt study. The AN
+        # control sample is conditioned on Mu15, and the emulation cannot be compared to it
+        # unless the same condition can be applied here. Verified present in
+        # RunIII2024Summer24NanoAODv15 by listing the branches of a source file off /pnfs:
+        # 4 HLT_Mu15* and 22 HLT_Mu8*. Only the SINGLE-MUON ones are kept -- the other 20
+        # HLT_Mu8* are e-mu cross triggers (three of which are already kept above) and are
+        # not reference triggers for a muon measurement.
+        "HLT.Mu15", "HLT.Mu15_IsoVVVL_PFHT450",
+        "HLT.Mu15_IsoVVVL_PFHT450_PFMET50", "HLT.Mu15_IsoVVVL_PFHT600",
+        "HLT.Mu8", "HLT.Mu8_TrkIsoVVL",
         # Recoil corrected MET
         "RecoilCorrMET.{pt,phi}_{recoilresp,recoilres}_{up,down}",
         # information of tt sample additional bs
