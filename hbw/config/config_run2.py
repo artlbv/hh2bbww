@@ -1492,6 +1492,11 @@ def add_config(
         # via callable expressions, so they need no producer and no re-reduction.
         from hbw.config.topo_an_variables import add_topo_an_variables
         add_topo_an_variables(cfg)
+        # muon identification variables (PNet lepton scores, promptMVA, jetRelIso). These read
+        # per-muon columns kept only from the topo_feat2 reduction onward, so they are empty at
+        # earlier versions -- see the module docstring.
+        from hbw.config.topo_muid_variables import add_topo_muid_variables
+        add_topo_muid_variables(cfg)
 
     # set some config defaults and groups
     # TODO: it might make sense to completely separate this for SL/DL
