@@ -307,7 +307,7 @@ TOPO_WEIGHT_CHOICES = ("or3", "topo", "or2", "isomu24", "mu12")
     #: the estimator whose ensemble mean IS the weight, one of TOPO_WEIGHT_CHOICES. See the
     #: docstring for why this is a directly fitted union rather than the residual decomposition.
     weight_estimator="or3",
-    version=3,
+    version=4,
 )
 def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     """
@@ -361,6 +361,15 @@ def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     emulated *only* so the emulation can be checked against it: ``topo_eff_isomu24`` pairs with
     ``topo_isomu24``, ``topo_eff_or2`` with ``topo_or2``, and ``topo_eff_mu12`` with the stored HLT
     bit.
+
+    **The eps columns are not gated on the support (v4).** They carry a prediction wherever the
+    six features are real -- including outside ``topo_in_support``, where it is an extrapolation
+    the flag marks -- and ``EMPTY_FLOAT`` only where a feature is a sentinel and no prediction
+    exists. Until v3 they were 0.0 outside the support, which is indistinguishable from a real
+    "efficiency is ~0" and silently biased any mean taken over a wider selection. Mask on
+    ``topo_eff_<name> != EMPTY_FLOAT`` before averaging, and on ``topo_in_support`` as well if
+    extrapolated rows are unwanted. The WEIGHTS are unaffected by this and remain gated on the
+    support with the ``d_OR2`` fallback.
     """
     events = self[topo_or2_weights](events, **kwargs)
     # the stored IsoMu24 decision travels alongside, so a single pass writes each emulated
@@ -375,27 +384,64 @@ def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     )
     events = set_ak_column(events, "topo_in_support", in_support)
 
-    # the feature matrix is built for in-support rows ONLY. Elsewhere the columns carry the
-    # EMPTY_FLOAT sentinel, which is finite and would therefore NOT be treated as missing by
-    # XGBoost -- it would be read as a real, very negative feature value.
-    x = np.column_stack([
-        np.asarray(ak.to_numpy(feat[f]), dtype=np.float64)[in_support] for f in FEATURE_ORDER
-    ]) if in_support.any() else np.zeros((0, len(FEATURE_ORDER)))
+    # WHERE THE MODEL IS EVALUATED, AND WHY THAT IS NOT THE SUPPORT (changed in v4).
+    #
+    # Until v3 the boosters saw in-support rows only and ``topo_eff_*`` was filled with 0.0
+    # everywhere else. That zero is indistinguishable from a genuine "efficiency is ~0"
+    # prediction and it is finite, so no NaN check catches it: averaging ``topo_eff_or2`` over
+    # any selection wider than the support silently divided the answer by the support fraction
+    # (measured on tt FH: 0.043 instead of 0.677, a factor 16 low, with no warning). An
+    # efficiency column must never read as zero merely because a flag is off.
+    #
+    # The precondition for evaluating is NOT membership of the support -- it is that the six
+    # features are real. Those are different questions, and on tt FH they split three ways:
+    #
+    #     in support (valid & n_btag_pnet >= 2)   6.3%   all features real
+    #     valid but n_btag_pnet < 2              20.5%   all features real, ZERO sentinels
+    #     not valid (no muon / < 3 jets)         73.1%   mu_pt/eta/iso are EMPTY_FLOAT in 99.99%
+    #
+    # The middle band was being zeroed purely because of a b-tag count while carrying six
+    # perfectly real features; the model has something to say there and it is an extrapolation
+    # in n_btag, which is exactly what ``topo_in_support`` is for flagging. The bottom band is
+    # a different thing entirely: with no muon there is no mu_pt, and feeding EMPTY_FLOAT to
+    # XGBoost does not extrapolate -- it reads -99999 as a real, very negative feature value
+    # and returns a confident number that means nothing.
+    #
+    # So: evaluate wherever no feature is a sentinel, and mark the rest EMPTY_FLOAT rather than
+    # 0.0. EMPTY_FLOAT is this codebase's "not defined" convention, variables already filter it
+    # via ``null_value``, and unlike 0.0 an unmasked mean over it is unmissably wrong instead of
+    # plausibly wrong. Consumers get three distinguishable states:
+    #
+    #     topo_eff_* == EMPTY_FLOAT                no prediction exists (no muon to trigger on)
+    #     topo_eff_* != EMPTY_FLOAT, ~in_support   a real prediction, EXTRAPOLATED -- check the bit
+    #     topo_in_support                          a real prediction inside the training support
+    x_all = np.column_stack([
+        np.asarray(ak.to_numpy(feat[f]), dtype=np.float64) for f in FEATURE_ORDER
+    ]) if len(in_support) else np.zeros((0, len(FEATURE_ORDER)))
+    evaluable = (
+        np.all(x_all != EMPTY_FLOAT, axis=1) & np.all(np.isfinite(x_all), axis=1)
+        if len(x_all) else np.zeros(0, dtype=bool)
+    )
+    x = x_all[evaluable]
 
     n_out = int((~in_support).sum())
     if n_out:
+        n_extrap = int((evaluable & ~in_support).sum())
         logger.info(
             f"{n_out} of {len(in_support)} events ({n_out / len(in_support) * 100:.2f}%) are "
-            f"outside the estimator's training support; falling back to w = d_OR2 there",
+            f"outside the estimator's training support; the applied weight falls back to "
+            f"w = d_OR2 there. Of those, {n_extrap} carry real features and DO receive an "
+            f"extrapolated eps (flagged by topo_in_support == False); the remaining "
+            f"{n_out - n_extrap} have a sentinel feature and get eps = EMPTY_FLOAT",
         )
 
     for name in TOPO_ESTIMATORS:
-        mean = np.zeros(len(in_support), dtype=np.float32)
-        std = np.zeros(len(in_support), dtype=np.float32)
+        mean = np.full(len(in_support), EMPTY_FLOAT, dtype=np.float32)
+        std = np.full(len(in_support), EMPTY_FLOAT, dtype=np.float32)
         if len(x):
             m, s = self.topo_ensemble(name, x)
-            mean[in_support] = m
-            std[in_support] = s
+            mean[evaluable] = m
+            std[evaluable] = s
         events = set_ak_column(events, f"topo_eff_{name}", mean)
         events = set_ak_column(events, f"topo_eff_{name}_std", std)
 
@@ -418,8 +464,15 @@ def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     # cancels the denominator and leaves E[w] = P(OR2) + E[eps_res] = P(OR3). The one assumption is
     # that eps_OR2 estimates P(OR2 | x) well -- and that is not an assumption we have to take on
     # faith, because it is precisely what hbw.TopoEmulationClosure measures against the stored bit.
+    #
+    # The in_support gate below is explicit as of v4. It is not a change of behaviour: until v3
+    # eff_res was 0.0 outside the support, so eff_cond came out 0 and w_built collapsed to d_or2
+    # there anyway. Now that the estimators extrapolate onto real features outside the support,
+    # that accident no longer holds, and the gate has to be written down to keep both weights
+    # bit-for-bit what they were. Extending the WEIGHT beyond the support is a separate physics
+    # decision and is deliberately not taken here.
     p_fail = np.clip(1.0 - eff_or2, 1e-6, None)
-    eff_cond = np.clip(eff_res / p_fail, 0.0, 1.0)
+    eff_cond = np.where(in_support, np.clip(eff_res / p_fail, 0.0, 1.0), 0.0)
     w_built = np.clip(d_or2 + (1.0 - d_or2) * eff_cond, 0.0, 1.0)
     events = set_ak_column(events, "topo_trigger_weight_built", w_built.astype(np.float32))
 
@@ -427,7 +480,7 @@ def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     # of the weight and the b-tagged Mu12 leg never reaches a denominator. Outside the support
     # there is no model, and the stored OR2 decision is the floor.
     eff_w = np.asarray(ak.to_numpy(events[f"topo_eff_{self.weight_estimator}"]), dtype=np.float64)
-    w = np.where(in_support, np.clip(eff_w, 0.0, 1.0), d_or2)
+    w = np.where(in_support, np.clip(eff_w, 0.0, 1.0), d_or2)   # unchanged in v4
     events = set_ak_column(events, "topo_trigger_weight", w.astype(np.float32))
 
     # Internal consistency of estimators that were fitted independently of one another: nothing in
