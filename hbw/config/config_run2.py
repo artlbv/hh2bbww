@@ -1399,13 +1399,30 @@ def add_config(
         #   1 pt, 2 eta, 3 pfRelIso03_all, 9 jetPtRatio (= 1/(1+jetRelIso)),
         #   11 dxy, 12 dz, 5 miniPFRelIso_all   -- already kept above
         #   4 miniPFRelIso_chg, 6 jetNDauCharged, 7 jetPtRelv2, 10 sip3d, 13 segmentComp -- added here
-        #   8 jetDF  -- NOT directly available: it is the DeepFlavour b-score of the muon's HOST
-        #               jet, reachable only through jetIdx into the *uncleaned* nano Jet
-        #               collection. jetIdx is kept below, but note that hbw/selection/jet.py:76-77
-        #               removes jets within dR<0.4 of a selected muon, so the host jet is
-        #               normally NOT in the reduced Jet collection and the index will not
-        #               resolve downstream. Input 8 needs resolving at selection time.
-        "Muon.{miniPFRelIso_chg,jetNDauCharged,jetPtRelv2,sip3d,segmentComp,jetIdx}",
+        #   8 jetDF -- added here too. An EARLIER VERSION OF THIS COMMENT CLAIMED jetDF WAS
+        #              UNOBTAINABLE, on the reasoning that it is the host jet's DeepFlavour
+        #              score and so reachable only by resolving jetIdx into the uncleaned nano
+        #              Jet collection, which hbw/selection/jet.py:76-77 empties of the host jet
+        #              by removing jets within dR<0.4 of a selected muon. THAT WAS WRONG.
+        #              Muon_jetDF is a FLAT PER-MUON BRANCH in NanoAOD: the value is attached to
+        #              the muon, not looked up through the Jet collection, so no amount of jet
+        #              cleaning can take it away. Verified present in this campaign by reading
+        #              the branch list of a Summer24 NanoAODv15 file directly off /pnfs
+        #              (RunIII2024Summer24NanoAODv15, 77 Muon_* branches, Muon_jetDF among them).
+        #              With it, all 13 promptMVA inputs are available -- none is unrecoverable.
+        "Muon.{miniPFRelIso_chg,jetNDauCharged,jetPtRelv2,sip3d,segmentComp,jetIdx,jetDF}",
+        # GEN TRUTH for the prompt / non-prompt split. genPartFlav is the muon's gen origin
+        # (1 = prompt, 15 = from tau, 4 = from c hadron, 5 = from b hadron, 0 = unmatched), so a
+        # non-prompt category can be defined on TRUTH instead of on a geometric proxy. Without
+        # it the split has to be made with dR(mu, b-jet) < 0.4, which is what E8 had to do --
+        # on tt1L, a different process from the tt_fh the estimator family is fitted on. Keeping
+        # this retires both of that measurement's load-bearing caveats. MC-only, as are
+        # HardGenPart / GenPartonTop / gen_hbw_decay above; every dataset in these configs is MC.
+        "Muon.{genPartFlav,genPartIdx}",
+        # ParticleNet lepton scores -- the modern successor to the frozen 2022 promptMVA BDT,
+        # trained in-campaign rather than inherited. Nearly free to carry and the natural
+        # comparison point for the raw-inputs-beat-the-BDT result.
+        "Muon.pnScore_{prompt,heavy,light,tau}",
         # HLT-isolation-adjacent variables (tracker / charged-only), for the separate question
         # of which offline isolation is closest to the three HLT isolations.
         "Muon.{tkRelIso,pfRelIso03_chg,ip3d}",
