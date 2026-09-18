@@ -72,3 +72,39 @@ def add_topo_muid_variables(config: od.Config) -> None:
         binning=[-1.05, -0.95] + [round(-0.95 + 0.1 * i, 2) for i in range(1, 41)],
         x_title="muon jetRelIso",
     )
+
+    # Muon pt in the exact bins requested for the heavy-score yield split (Artur, 2026-09-18),
+    # meant to be used as the FIRST axis of the 2D variable
+    # "muon0_pt-muon0_pnscore_heavy". A 2D histogram is required rather than two 1D ones:
+    # the yield with heavy < 0.2 INSIDE a pt bin needs the joint distribution, and pt and the
+    # heavy score are strongly correlated. Factorising the marginals was measured to be wrong by
+    # up to 42 pp (IsoMu24, 12-15 GeV: 41.5% true vs 84.0% inclusive).
+    #
+    # EDGES. The requested bins are 12-15, 15-20, 20-25, 25+. Two extra edges are added so that
+    # no event lands in a flow bin and is silently lost when the histogram is summed:
+    #   * 0-10 and 10-12 below, because the muon collection keeps pt >= 5 (hbw/selection/
+    #     lepton.py:101) and 2.0% of sr__1mu sits in [10, 12) -- below the lowest requested bin;
+    #   * 13000 as the top edge, beyond any physical muon pt, so "25+" is genuinely inclusive.
+    config.add_variable(
+        name="muon0_pt",
+        expression="Muon.pt[:, 0]",
+        null_value=EMPTY_FLOAT,
+        binning=[0.0, 10.0, 12.0, 15.0, 20.0, 25.0, 13000.0],
+        unit="GeV",
+        x_title=r"muon $p_{T}$",
+    )
+
+    # A FINE muon pt axis, for the 2D plot "muon0_ptfine-muon0_pnscore_heavy". It exists
+    # separately from muon0_pt above because the two axes answer different questions and want
+    # opposite binnings: muon0_pt has the four analysis bins plus an inclusive 25-13000 bin,
+    # which is right for a yield table and useless as a plot axis -- one bin would span the
+    # whole frame. This one is 2 GeV wide through the trigger-threshold region and widens above,
+    # so the structure around 12/15/20/25 GeV and the IsoMu24 turn-on near 24 GeV is visible.
+    config.add_variable(
+        name="muon0_ptfine",
+        expression="Muon.pt[:, 0]",
+        null_value=EMPTY_FLOAT,
+        binning=[float(x) for x in range(0, 62, 2)] + [65.0, 70.0, 80.0, 90.0, 100.0, 120.0, 150.0, 200.0, 300.0],
+        unit="GeV",
+        x_title=r"muon $p_{T}$",
+    )
