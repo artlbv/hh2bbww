@@ -1459,6 +1459,15 @@ def add_config(
         "HLT.Mu15", "HLT.Mu15_IsoVVVL_PFHT450",
         "HLT.Mu15_IsoVVVL_PFHT450_PFMET50", "HLT.Mu15_IsoVVVL_PFHT600",
         "HLT.Mu8", "HLT.Mu8_TrkIsoVVL",
+        # The rest of the single-muon ladder in the 2024 menu (2026-09-21, same source-file
+        # listing): the unisolated Mu17 / Mu19 / Mu20 / Mu50 and their TrkIsoVVL variants, the
+        # isolated IsoMu20 / IsoMu27, and the Mu12eta2p3 pair used as b-tag monitoring paths.
+        # There is NO Mu15_TrkIsoVVL in this menu; the tracker-isolated low-threshold references
+        # are Mu8/Mu17/Mu19_TrkIsoVVL. All booleans, so the cost is nil; none of the earlier
+        # reductions (topo1, topo_feat1, topo_feat2) carry any of the paths in this block.
+        "HLT.Mu17", "HLT.Mu17_TrkIsoVVL", "HLT.Mu19", "HLT.Mu19_TrkIsoVVL",
+        "HLT.Mu20", "HLT.IsoMu20", "HLT.IsoMu27", "HLT.Mu50",
+        "HLT.Mu12eta2p3", "HLT.Mu12eta2p3_PFJet40",
         # Recoil corrected MET
         "RecoilCorrMET.{pt,phi}_{recoilresp,recoilres}_{up,down}",
         # information of tt sample additional bs
