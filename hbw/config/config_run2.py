@@ -1229,7 +1229,24 @@ def add_config(
     # swap plus a version bump here -- no code change -- as long as the bundle's feature_order and
     # presel still match; the producer asserts the former on load.
     if cfg.has_tag("is_sl"):
-        add_external("topo_ensemble", (f"{model_path}/topo_ens_K20_hhmc_poc_v1.json.gz", "v1"))
+        # v2r (release topo-ens-K20-v2c-pnet, asset topo_ens_K20_v2r_pnet.json.gz, sha256
+        # f95584c8...f721f): isolation + muon PNet feature set,
+        # trained on HH_V5_SCOUT + TT_V5_SCOUT 1L/2L/0L at natural weights under the 2026 re-HLT,
+        # 15 estimators incl. four MC-internal control legs and five conditionals. The producer
+        # reads per-estimator feature index lists, so FEATURE_ORDER grew to 15 columns with the
+        # original six kept at indices 0-5. The v1 bundle above still loads (six estimators).
+        #
+        # v2r REPLACES the withdrawn v2c asset (63bf4dba...) and is byte-identical to it in
+        # everything that predicts: verified here leaf by leaf, the two bundles differ in exactly
+        # three strings -- two corrected ``menu_stability`` notes and the exporter's git stamp
+        # (405ece3 -> 6200662) -- with all 15 ensembles identical member for member, the same Platt
+        # pairs, feature_order, eps and presel. Numbers produced with v2c therefore stand.
+        #
+        # Two further assets of the same release are kept alongside and are NOT defaults:
+        # ``topo_ens_K20_v2rmin_minimal`` (no-PNet fallback, sha256 8caefbb9...eca6) and
+        # ``topo_ens_K20_v2rhh13_pnet`` (HH-upweighted envelope, c4649454...e91c) -- the latter is
+        # a systematic variation, not an alternative central choice.
+        add_external("topo_ensemble", (f"{model_path}/topo_ens_K20_v2r_pnet.json.gz", "v2r"))
 
     # V+jets reweighting (derived for 13 TeV, custom json converted from ROOT, not centrally produced)
     # ROOT files (eej.root and aj.root) taken from here:
