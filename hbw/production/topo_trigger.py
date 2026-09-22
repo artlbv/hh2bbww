@@ -339,7 +339,9 @@ TOPO_EXTRA_ESTIMATORS = (
 #: instead is silent and wrong -- it under-counts, by percentage points rather than fractions of
 #: one, because on seeded events the true efficiency sits above its unconditional average; the
 #: exporter measured the size per sample and reports it in the release notes of the bundle, which
-#: is where that number belongs. The bit is PER EVENT while
+#: is where that number belongs -- those notes live in the private repository the bundle is
+#: released from, so the pointer is deliberately unfollowable from here rather than missing.
+#: The bit is PER EVENT while
 #: the estimator is per in-support muon; with the ``sl1_topo`` selection there is exactly one
 #: selected muon per event, so the assignment is unambiguous here and would not be in a
 #: multi-muon selection.
