@@ -47,15 +47,50 @@ logger = law.logger.get_logger(__name__)
 #: staircase proxy for the continuous L1 HT that NanoAOD does not store.
 L1HT_THRESHOLDS = (120.0, 150.0, 200.0, 255.0, 280.0, 320.0, 360.0)
 
-#: feature column order. Load-bearing: it is fixed by ``config.py``'s ``ALL_FEATURES`` and must
+#: feature column order. Load-bearing: it is fixed by the exporter's ``ALL_FEATURES`` and must
 #: match the order the estimator was fit on. Never reorder without re-exporting the model.
-FEATURE_ORDER = ("mu_pt", "mu_eta", "mu_iso", "ht", "lead_btag", "lead_bpt")
+#:
+#: v5 (bundle ``topo_ens_K20_v2c_pnet``): the six original columns stay in place at indices 0-5 and
+#: the isolation/ID block plus the four muon PNet scores are appended, so an estimator picks the
+#: columns it was fitted on through its own ``features`` index list. No estimator uses all fifteen:
+#: the muon-only legs take eleven (no ht/lead_btag/lead_bpt) and ``mu_iso`` is a preselection cut
+#: rather than a feature in v2, so index 2 is carried but unused. See :py:data:`MU_FEATURES`.
+FEATURE_ORDER = (
+    "mu_pt", "mu_eta", "mu_iso", "ht", "lead_btag", "lead_bpt",
+    "tkRelIso", "jetRelIso", "miniPFRelIso_all", "sip3d", "jetDF",
+    "pnScore_prompt", "pnScore_heavy", "pnScore_light", "pnScore_tau",
+)
+
+#: the per-muon columns of :py:data:`FEATURE_ORDER` that are read straight off the selected muon.
+#: ``jetDF`` IS a flat per-muon NanoAOD branch (``Muon_jetDF``, the DeepJet b+bb+lepb sum of the
+#: muon's associated uncleaned jet, 0 where there is none) -- see the note in ``config_run2.py``
+#: next to the keep_columns entry; it does not have to be rebuilt from ``Muon.jetIdx``.
+MU_FEATURES = (
+    "tkRelIso", "jetRelIso", "miniPFRelIso_all", "sip3d", "jetDF",
+    "pnScore_prompt", "pnScore_heavy", "pnScore_light", "pnScore_tau",
+)
+
+#: the columns of :py:data:`FEATURE_ORDER` that describe the EVENT rather than the muon. These are
+#: the ones only ``topo_features`` can build (they need the cleaned jet collection), so they are
+#: always read from the stored ``topo_feat`` field; everything else can be re-read off ``Muon``.
+EVENT_FEATURES = ("mu_pt", "mu_eta", "mu_iso", "ht", "lead_btag", "lead_bpt")
+
+#: feature name -> ``Muon`` branch, where the two differ.
+MU_SOURCE = {"mu_pt": "pt", "mu_eta": "eta", "mu_iso": "pfRelIso03_all"}
+
+#: ``Muon.jetRelIso`` carries -1.0 for a muon with no associated jet (0.32% of the training rows).
+#: That is a REAL trained-on value, not a sentinel to be repaired: the exporter kept it and so must
+#: this producer. It is the one feature whose legitimate range dips below zero, which is why the
+#: evaluable mask below tests against EMPTY_FLOAT rather than against a sign.
+JETRELISO_NO_JET = -1.0
 
 
 @producer(
     uses={
         "Jet.{pt,eta,phi,mass,btagPNetB}",
         "Muon.{pt,eta,phi,mass,pfRelIso03_all,tightId}",
+        "Muon.{tkRelIso,jetRelIso,miniPFRelIso_all,sip3d,jetDF}",
+        "Muon.{pnScore_prompt,pnScore_heavy,pnScore_light,pnScore_tau}",
     } | {
         optional(f"L1.HTT{int(t)}er") for t in L1HT_THRESHOLDS
     },
@@ -109,6 +144,12 @@ def topo_features(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     events = set_ak_column(events, "topo_feat.mu_pt", _first(lead_mu.pt))
     events = set_ak_column(events, "topo_feat.mu_eta", _first(lead_mu.eta))
     events = set_ak_column(events, "topo_feat.mu_iso", _first(lead_mu.pfRelIso03_all))
+
+    # --- per-muon isolation / ID / PNet block (v5). Read off the SAME leading muon, so every
+    #     feature in a row describes one object; ``_first`` fills EMPTY_FLOAT where there is none.
+    for f in MU_FEATURES:
+        events = set_ak_column(events, f"topo_feat.{f}", _first(lead_mu[f]))
+
 
     # --- jet-level features ---
     btag = jet_g[self.btag_column]
@@ -277,6 +318,41 @@ def topo_isomu24_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array
 #: statement about the construction that nothing else in the chain would make.
 TOPO_ESTIMATORS = ("isomu24", "mu12", "or2", "topo_res", "topo", "or3")
 
+#: estimators the v2 bundle adds beyond :py:data:`TOPO_ESTIMATORS`, written when the loaded bundle
+#: carries them and skipped silently when it does not, so a v1 bundle still loads.
+#:
+#: * CONTROL LEGS -- ``mu15``, ``mu12eta2p3``, ``mu17_trkisovvl``, ``mu15_isovvvl_ht450``: an
+#:   isolation ladder (none -> tracker-VVL -> PF-VVVL -> IsoMu24) fitted for the MC-internal study
+#:   of how much of the emulation's non-prompt behaviour is the online isolation working point.
+#:   All four paths are PRESCALED in data, so they are never data-validated efficiencies.
+#: * CONDITIONALS -- ``*_given_<leg>``: fitted and evaluated ONLY on events whose named stored bit
+#:   fired. See :py:data:`TOPO_CONDITIONAL_NOTE`.
+TOPO_EXTRA_ESTIMATORS = (
+    "mu15", "mu15_isovvvl_ht450", "mu12eta2p3", "mu17_trkisovvl",
+    "topo_given_mu12eta2p3", "or3_given_mu12eta2p3", "or2_given_mu12eta2p3",
+    "topo_given_mu15", "or3_given_mu15",
+)
+
+#: why a conditional estimator may never be used as a plain weight. A conditional carries
+#: ``conditioned_on = "<stored HLT column>"`` and estimates ``P(target | that bit fired, x)``; the
+#: consumer must apply ``w = eps x stored_bit``. Using the UNCONDITIONAL estimator in that product
+#: instead is silent and wrong -- it under-counts, by percentage points rather than fractions of
+#: one, because on seeded events the true efficiency sits above its unconditional average; the
+#: exporter measured the size per sample and reports it in the release notes of the bundle, which
+#: is where that number belongs. The bit is PER EVENT while
+#: the estimator is per in-support muon; with the ``sl1_topo`` selection there is exactly one
+#: selected muon per event, so the assignment is unambiguous here and would not be in a
+#: multi-muon selection.
+#: stored HLT columns any conditional in the v2 bundle can be conditioned on. Declared optional in
+#: ``uses`` so that a reduction predating commit 39eea63 (which carries only the original eight
+#: paths) still loads; the setup below hard-fails instead if a conditional is actually requested
+#: and its column is absent, because eps x (missing bit) has no safe default.
+TOPO_CONDITION_COLUMNS = ("Mu12eta2p3", "Mu15")
+
+TOPO_CONDITIONAL_NOTE = (
+    "conditional estimators carry conditioned_on and must be applied as eps * stored_bit"
+)
+
 #: the estimator used by the residual construction, which is kept as a cross-check only.
 TOPO_RESIDUAL_ESTIMATOR = "topo_res"
 
@@ -287,16 +363,26 @@ TOPO_WEIGHT_CHOICES = ("or3", "topo", "or2", "isomu24", "mu12")
 
 
 @producer(
-    uses={topo_or2_weights, topo_isomu24_weights} | {f"topo_feat.{f}" for f in FEATURE_ORDER} | {
+    uses={topo_or2_weights, topo_isomu24_weights} | {f"topo_feat.{f}" for f in EVENT_FEATURES} | {
         "topo_feat.valid", "topo_feat.n_btag_pnet",
+        # phi and mass are not features; the Muon collection carries Lorentz-vector behaviour and
+        # awkward refuses to build the record without its azimuthal coordinates.
+        "Muon.{pt,eta,phi,mass,pfRelIso03_all,tkRelIso,jetRelIso,miniPFRelIso_all,sip3d,jetDF}",
+        "Muon.{pnScore_prompt,pnScore_heavy,pnScore_light,pnScore_tau}",
+    } | {
+        optional(f"topo_feat.{f}") for f in MU_FEATURES
     },
     produces={
         topo_or2_weights, topo_isomu24_weights,
         "topo_trigger_weight", "topo_trigger_weight_built", "topo_in_support",
     } | {
-        f"topo_eff_{n}" for n in TOPO_ESTIMATORS
+        f"topo_eff_{n}" for n in TOPO_ESTIMATORS + TOPO_EXTRA_ESTIMATORS
     } | {
-        f"topo_eff_{n}_std" for n in TOPO_ESTIMATORS
+        f"topo_eff_{n}_std" for n in TOPO_ESTIMATORS + TOPO_EXTRA_ESTIMATORS
+    } | {
+        f"topo_weight_{n}" for n in TOPO_EXTRA_ESTIMATORS if "_given_" in n
+    } | {
+        optional(f"HLT.{c}") for c in TOPO_CONDITION_COLUMNS
     },
     sandbox=dev_sandbox("bash::$HBW_BASE/sandboxes/venv_topo.sh"),
     mc_only=True,
@@ -307,7 +393,12 @@ TOPO_WEIGHT_CHOICES = ("or3", "topo", "or2", "isomu24", "mu12")
     #: the estimator whose ensemble mean IS the weight, one of TOPO_WEIGHT_CHOICES. See the
     #: docstring for why this is a directly fitted union rather than the residual decomposition.
     weight_estimator="or3",
-    version=4,
+    #: the muon selection used to pick the object the features describe. Must match
+    #: ``topo_features``' cuts, since the two are asserted to select the same muon.
+    mu_pt=10.0,
+    mu_eta=2.4,
+    mu_iso=0.15,
+    version=5,
 )
 def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     """
@@ -415,11 +506,59 @@ def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     #     topo_eff_* == EMPTY_FLOAT                no prediction exists (no muon to trigger on)
     #     topo_eff_* != EMPTY_FLOAT, ~in_support   a real prediction, EXTRAPOLATED -- check the bit
     #     topo_in_support                          a real prediction inside the training support
-    x_all = np.column_stack([
-        np.asarray(ak.to_numpy(feat[f]), dtype=np.float64) for f in FEATURE_ORDER
-    ]) if len(in_support) else np.zeros((0, len(FEATURE_ORDER)))
+    # FEATURE MATRIX (v5). The six event/muon-kinematic columns come from ``topo_feat``, written
+    # at reduction time. The isolation/ID/PNet block does NOT: ``topo_features`` gained those
+    # columns in v5 and reductions made before that carry only the original six, so they are read
+    # here off the reduced ``Muon`` collection instead, which keeps every one of them. When a
+    # reduction DOES carry them the stored column wins, so a future re-reduction changes nothing.
+    #
+    # The muon must be the same one ``topo_feat`` described, or a row would mix two objects. The
+    # reduced collection is already tight-ID'd and pT > 10 (sl1_topo's veto_mu_mask), so the
+    # study's selection reduces to the isolation and eta cuts; the agreement of pt/eta/iso with
+    # ``topo_feat`` is asserted per row below and a disagreeing row is simply not evaluated.
+    mu = events.Muon
+    mu_g = mu[(mu.pfRelIso03_all < self.mu_iso) & (mu.pt > self.mu_pt) & (abs(mu.eta) < self.mu_eta)]
+    lead_mu = mu_g[ak.argmax(mu_g.pt, axis=1, keepdims=True)]
+
+    def _mu_col(name: str) -> np.ndarray:
+        if name in feat.fields:
+            return np.asarray(ak.to_numpy(feat[name]), dtype=np.float64)
+        return np.asarray(
+            ak.to_numpy(ak.fill_none(ak.firsts(lead_mu[MU_SOURCE.get(name, name)]), EMPTY_FLOAT)),
+            dtype=np.float64,
+        )
+
+    if len(in_support):
+        cols = []
+        for f in FEATURE_ORDER:
+            cols.append(
+                np.asarray(ak.to_numpy(feat[f]), dtype=np.float64) if f in EVENT_FEATURES
+                else _mu_col(f)
+            )
+        x_all = np.column_stack(cols)
+        # same-object check on the three columns that exist in both places
+        mism = np.zeros(len(in_support), dtype=bool)
+        for f, src in (("mu_pt", "pt"), ("mu_eta", "eta"), ("mu_iso", "pfRelIso03_all")):
+            stored = np.asarray(ak.to_numpy(feat[f]), dtype=np.float64)
+            here = np.asarray(
+                ak.to_numpy(ak.fill_none(ak.firsts(lead_mu[src]), EMPTY_FLOAT)), dtype=np.float64,
+            )
+            both = (stored != EMPTY_FLOAT) & (here != EMPTY_FLOAT)
+            mism |= both & ~np.isclose(stored, here, rtol=0.0, atol=1e-3)
+        if mism.any():
+            logger.warning(
+                f"{int(mism.sum())} of {len(mism)} rows select a different leading muon here than "
+                f"topo_feat did; they are not evaluated (eps = EMPTY_FLOAT)",
+            )
+    else:
+        x_all = np.zeros((0, len(FEATURE_ORDER)))
+        mism = np.zeros(0, dtype=bool)
+    # ``mu_iso`` (index 2) is carried by FEATURE_ORDER but used by no v2 estimator, and a row may
+    # legitimately hold EMPTY_FLOAT in a column nothing reads. Require realness only of the columns
+    # some estimator actually indexes. ``jetRelIso == -1.0`` is a trained-on value, not a sentinel.
+    used = sorted({i for idx, _ in self.topo_members.values() for i in idx}) if len(x_all) else []
     evaluable = (
-        np.all(x_all != EMPTY_FLOAT, axis=1) & np.all(np.isfinite(x_all), axis=1)
+        np.all(x_all[:, used] != EMPTY_FLOAT, axis=1) & np.all(np.isfinite(x_all[:, used]), axis=1) & ~mism
         if len(x_all) else np.zeros(0, dtype=bool)
     )
     x = x_all[evaluable]
@@ -435,7 +574,7 @@ def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
             f"{n_out - n_extrap} have a sentinel feature and get eps = EMPTY_FLOAT",
         )
 
-    for name in TOPO_ESTIMATORS:
+    for name in self.topo_members:
         mean = np.full(len(in_support), EMPTY_FLOAT, dtype=np.float32)
         std = np.full(len(in_support), EMPTY_FLOAT, dtype=np.float32)
         if len(x):
@@ -444,6 +583,35 @@ def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
             std[evaluable] = s
         events = set_ak_column(events, f"topo_eff_{name}", mean)
         events = set_ak_column(events, f"topo_eff_{name}_std", std)
+
+        # A CONDITIONAL estimator is P(target | conditioning bit fired, x). On its own the eps
+        # column is NOT an efficiency of the target: it is only defined where the bit fired, and a
+        # consumer that averages it over all events overstates the target. The usable quantity is
+        # the product with the stored bit, which this writes explicitly so that no downstream
+        # arithmetic has to remember the contract -- see TOPO_CONDITIONAL_NOTE.
+        cond = self.topo_conditions.get(name)
+        if cond is not None:
+            if cond not in events.HLT.fields:
+                # the reduction predates commit 39eea63 and does not carry this bit. There is no
+                # safe default for a missing conditioning decision -- assuming it fired inflates
+                # the weight, assuming it did not zeroes it -- so write EMPTY_FLOAT, which every
+                # consumer already has to mask, and say so once per chunk.
+                if not self._topo_warned_missing.get(cond):
+                    logger.warning(
+                        f"conditional estimator {name!r} needs the stored bit HLT.{cond}, which is "
+                        f"not in these reduced columns; topo_weight_{name} is EMPTY_FLOAT "
+                        f"everywhere. Re-reduce with the current keep_columns to use it",
+                    )
+                    self._topo_warned_missing[cond] = True
+                w_cond = np.full(len(in_support), EMPTY_FLOAT, dtype=np.float64)
+            else:
+                bit = np.asarray(ak.to_numpy(events.HLT[cond]), dtype=np.float64)
+                w_cond = np.where(
+                    (mean != EMPTY_FLOAT) & in_support,
+                    np.clip(mean.astype(np.float64), 0.0, 1.0) * bit,
+                    EMPTY_FLOAT,
+                )
+            events = set_ak_column(events, f"topo_weight_{name}", w_cond.astype(np.float32))
 
     d_or2 = np.asarray(ak.to_numpy(events.topo_or2), dtype=np.float64)
     eff_res = np.asarray(ak.to_numpy(events[f"topo_eff_{TOPO_RESIDUAL_ESTIMATOR}"]), dtype=np.float64)
@@ -551,6 +719,18 @@ def topo_or3_weights_setup(self: Producer, reqs: dict, **kwargs) -> None:
     if missing:
         raise ValueError(f"topo ensemble bundle {path} is missing estimators {sorted(missing)}")
 
+    # A conditional estimator applied as if it were unconditional is silent and wrong (see
+    # TOPO_CONDITIONAL_NOTE), so the weight may only ever be an UNCONDITIONAL estimator. Guard it
+    # here rather than at use time: by then the number is plausible and nothing distinguishes it.
+    w_spec = bundle["estimators"].get(self.weight_estimator, {})
+    if w_spec.get("conditioned_on") is not None:
+        raise ValueError(
+            f"weight_estimator {self.weight_estimator!r} is conditioned on "
+            f"{w_spec['conditioned_on']!r}; a conditional efficiency is P(target | that bit fired) "
+            f"and must be applied as eps * stored_bit (column topo_weight_*), never as a weight on "
+            f"its own",
+        )
+
     if self.weight_estimator not in TOPO_WEIGHT_CHOICES:
         raise ValueError(
             f"weight_estimator {self.weight_estimator!r} is not one of {TOPO_WEIGHT_CHOICES}; "
@@ -561,8 +741,23 @@ def topo_or3_weights_setup(self: Producer, reqs: dict, **kwargs) -> None:
     self.topo_eps = float(bundle["eps"])
     self.topo_meta = bundle["provenance"]
     self.topo_members = {}
-    for name in TOPO_ESTIMATORS:
+    self.topo_conditions = {}
+    self._topo_warned_missing = {}
+    # the v1 bundle has six estimators, v2 fifteen; take whatever is there so both load.
+    for name in TOPO_ESTIMATORS + tuple(n for n in TOPO_EXTRA_ESTIMATORS if n in bundle["estimators"]):
         spec = bundle["estimators"][name]
+        # ``conditioned_on`` must be present on EVERY estimator in a v2-contract bundle (explicit
+        # null for the unconditional ones). A bundle that omits the key predates the contract and
+        # its conditionals would be indistinguishable from unconditional ones, so refuse it.
+        if "_given_" in name and "conditioned_on" not in spec:
+            raise ValueError(
+                f"estimator {name!r} in {path} has no 'conditioned_on' key; this bundle predates "
+                f"the conditional contract and cannot be applied safely -- re-export it",
+            )
+        cond = spec.get("conditioned_on")
+        if cond is not None:
+            col = cond[len("HLT_"):] if cond.startswith("HLT_") else cond
+            self.topo_conditions[name] = col
         self.topo_members[name] = (
             list(map(int, spec["features"])),
             [
@@ -602,6 +797,7 @@ def topo_or3_weights_setup(self: Producer, reqs: dict, **kwargs) -> None:
 
 @topo_or3_weights.teardown
 def topo_or3_weights_teardown(self: Producer, **kwargs) -> None:
-    for attr in ("topo_members", "topo_ensemble", "topo_eps", "topo_meta"):
+    for attr in ("topo_members", "topo_ensemble", "topo_eps", "topo_meta", "topo_conditions",
+                 "_topo_warned_missing"):
         if hasattr(self, attr):
             delattr(self, attr)
