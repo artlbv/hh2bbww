@@ -129,8 +129,11 @@ def set_sl_config_defaults_and_groups(config_inst):
     config_inst.x.default_categories = ["incl", "sr__1mu", "sr__1e"]
     config_inst.x.default_variables = ["jet0_pt", "n_jet", "ht", "lepton0_pt"]
 
-    # general_settings default needs to be tuple (or dict) to be resolved correctly
-    config_inst.x.default_general_settings = ("data_mc_plots",)
+    # general_settings default needs to be tuple (or dict) to be resolved correctly.
+    # It is the CONTENT of the data_mc_plots group, not its name: the defaults are merged in front of
+    # the user's settings, and the sandbox re-resolves the merged dict by looking up its FIRST key as
+    # a group. With the name as default that lookup always hit and replaced every --general-settings
+    # value (e.g. magnitudes) by the bare group. Set below, once the groups exist.
     config_inst.x.default_custom_style_config = "default"
 
     #
@@ -367,6 +370,7 @@ def set_sl_config_defaults_and_groups(config_inst):
             "yscale": "log",
         },
     }
+    config_inst.x.default_general_settings = dict(config_inst.x.general_settings_groups["data_mc_plots"])
     config_inst.x.process_settings_groups = {
         "default": {default_signal_process: {"scale": 2000, "unstack": True}},
         "unstack_all": {proc.name: {"unstack": True} for proc, _, _ in config_inst.walk_processes()},
