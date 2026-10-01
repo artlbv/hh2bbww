@@ -191,6 +191,60 @@ def catid_lowmet(self: Categorizer, events: ak.Array, **kwargs) -> tuple[ak.Arra
     mask = events[self.config_inst.x.met_name]["pt"] < 20
     return events, mask
 
+
+#
+# Non-prompt-muon cleaning for the TOPO trigger sensitivity study.
+#
+
+
+@categorizer(uses={"Muon.pnScore_heavy"}, pn_heavy_max=0.001)
+def catid_muclean(self: Categorizer, events: ak.Array, **kwargs) -> tuple[ak.Array, ak.Array]:
+    """
+    Leading-muon heavy-flavour veto: ``Muon.pnScore_heavy < pn_heavy_max``.
+
+    Chosen by scanning every per-muon discriminant stored in the reduced c24v15 sample at fixed
+    ttbar efficiency; ``pnScore_heavy`` gave the strongest QCD suppression, and the only variable
+    it is not clearly separable from is ``pnScore_light``. Derive with a different
+    ``pn_heavy_max`` to move the working point. Its ttbar efficiency is lower under OR2 than under
+    ``IsoMu24``, because the Mu12 leg admits exactly the events this cuts.
+
+    Events with no muon are REJECTED rather than passed through: ``ak.firsts`` yields None there
+    and the fill value is deliberately above any threshold. The selection already requires a
+    muon, so this only matters if the categorizer is ever reused somewhere that does not.
+
+    NOTE the score is read off the FIRST Muon, matching the ``muon0_*`` variables. The collection
+    is pt-sorted by ``masked_sorted_indices`` in the jet/lepton selection, so this is the leading
+    selected muon, not an arbitrary one.
+    """
+    score = ak.fill_none(ak.firsts(events.Muon.pnScore_heavy), 1.0)
+    return events, score < self.pn_heavy_max
+
+
+@categorizer(uses={"Muon.pnScore_heavy"}, pn_heavy_max=0.001)
+def catid_muhf(self: Categorizer, events: ak.Array, **kwargs) -> tuple[ak.Array, ak.Array]:
+    """
+    Exact complement of :py:func:`catid_muclean`, i.e. the rejected heavy-flavour-like muons.
+
+    This exists because ``category_ids`` assigns ids to LEAF categories only
+    (:py:func:`columnflow.production.categories.category_ids_init` iterates
+    ``get_leaf_categories()``), so a parent category's content is the sum of its leaves. Adding
+    ``muclean`` alone would leave every existing category with exactly one leaf child and
+    silently redefine it as the cleaned subset. The two categorizers must therefore PARTITION
+    the parent, and the threshold must stay tied to ``catid_muclean``'s.
+    """
+    score = ak.fill_none(ak.firsts(events.Muon.pnScore_heavy), 1.0)
+    # strict logical negation, NOT an independent ``>=`` comparison. A NaN score would fail both
+    # ``< t`` and ``>= t``, so the event would fall out of the partition and quietly vanish from
+    # the parent category. Measured on tt_sl c24v15 there are currently ZERO genuine NaN scores,
+    # so this is a guard rather than a fix -- but it costs nothing and the failure would be silent.
+    #
+    # Events with NO muon are a different matter and they are real: the whole 1e channel, a large
+    # share of the stored tt_sl events, has no Muon entry. ``fill_none`` puts those at 1.0, so they
+    # all land in ``muhf`` and ``sr__1e__*__muclean`` is empty BY CONSTRUCTION. That is intended
+    # -- the partition stays exact and the 1e parents keep their full content -- but do not read
+    # an empty 1e muclean bin as a physics statement.
+    return events, ~(score < self.pn_heavy_max)
+
 #
 # Categorizer for hhh sr and cr such, that the bcut is applied on cat level and not in selection
 #

@@ -30,7 +30,10 @@ logger = law.logger.get_logger(__name__)
 @producer(
     # uses in init, produces should not be empty
     produces={"category_ids"},
-    version=1,
+    # version 2: adds the ``__muclean`` twin of every production category (leading-muon
+    #            pnScore_heavy < 0.001) for the TOPO non-prompt study. Existing category names
+    #            and ids are unchanged, so V1 histograms stay valid; V2 simply carries more ids.
+    version=2,
 )
 def pre_ml_cats(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     """

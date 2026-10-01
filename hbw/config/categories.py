@@ -409,6 +409,46 @@ def add_categories_production(config: od.Config) -> None:
     )
     logger.info(f"Number of produced category insts: {n_cats} (took {(time() - t0):.3f}s)")
 
+    #
+    # TOPO study: a non-prompt-muon-cleaned twin of every category above.
+    #
+    # Added as a SECOND pass rather than a fifth block in ``category_blocks`` on purpose: a fifth
+    # block would rename every existing category (``sr__1mu`` -> ``sr__1mu__<something>``) and
+    # orphan every histogram already on disk. This way the existing NAMES and IDS are untouched.
+    #
+    # The pass must contain BOTH the cut and its complement. ``category_ids`` assigns ids to leaf
+    # categories only, so a parent's content is the sum of its leaves; a single ``muclean`` child
+    # would leave ``sr__1mu__resolved__1b`` with exactly one leaf and silently redefine it as the
+    # cleaned subset, rewriting every plot already made from it. ``muclean`` and ``muhf``
+    # partition the parent, so every existing category keeps its meaning.
+    #
+    # The id is a sum over root cats (see ``kwargs_fn``), and the existing blocks occupy the
+    # units, tens, hundreds and ten-thousands. 1e6/2e6 are clear decades above the largest
+    # reachable existing sum, so the combined ids cannot collide with an existing category.
+    config.add_category(
+        name="muclean",
+        id=1000000,
+        selection="catid_muclean",
+        label=r"$\mu$ PNet heavy < 0.001",
+    )
+    config.add_category(
+        name="muhf",
+        id=2000000,
+        selection="catid_muhf",
+        label=r"$\mu$ PNet heavy $\geq$ 0.001",
+    )
+    muclean_blocks = OrderedDict(category_blocks)
+    muclean_blocks["muclean"] = [config.get_category("muclean"), config.get_category("muhf")]
+    t0 = time()
+    n_muclean = create_category_combinations(
+        config,
+        muclean_blocks,
+        name_fn=name_fn,
+        kwargs_fn=kwargs_fn,
+        skip_existing=True,
+    )
+    logger.info(f"Number of muclean category insts: {n_muclean} (took {(time() - t0):.3f}s)")
+
     # NOTE: dycr only exists in the DL channel, see add_mll_categories
     if "dycr" in config.x.main_categories:
         dycr__nonmixed = config.add_category(
