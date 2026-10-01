@@ -19,6 +19,36 @@ This module mirrors that definition. It deliberately does NOT reuse hbw's own ob
 * hbw's b-tag counting uses ``btagUParTAK4B`` at the medium WP for ``year >= 2024``; the estimator
   counts ``btagPNetB > 0.2``. Both coexist -- ``btagPNetB`` is separately stored and kept.
 
+**The jet-side feature definition, confirmed against the upstream source** (private repo, so this
+records the definition and not any measured number). The four attributes below were checked
+line-by-line against the reference implementation rather than inferred from the feature names:
+
+======================  ==========================  ==================================================
+attribute               value                       note
+======================  ==========================  ==================================================
+b-tag branch            ``btagPNetB``               ParticleNet, NOT ``btagUParTAK4B``
+b-tag threshold         ``> 0.2``                   an ad-hoc LOOSE threshold, **not** a named working
+                                                    point -- see the caution below
+jet acceptance          ``pt > 25``, ``|eta| < 2.5``
+jet--muon cleaning      ``dR >= 0.4``               against selected muons only, never electrons
+jet ID                  none (``JET_ID = False``)   matched here by ``jet_id=False``; see the hazard
+======================  ==========================  ==================================================
+
+CAUTION on the threshold. ``0.2`` is a literal cut on ``btagPNetB``; do not write a working-point
+name beside it anywhere. The looseness is deliberate -- the preselection keeps near-threshold jets
+that a tighter offline selection would drop, which is also why this study is more exposed to online
+b-tag effects than a typical analysis would be. Relabelling it as a named WP is a change to the
+preselection, hence a refit, not a documentation fix. Upstream carries this rationale as a comment
+at the definition (private repo, PR #202).
+
+HAZARD on the jet ID. Both sides have it off *today*, so the definitions agree, but upstream has an
+in-flight change that would turn it on, and its two feature builders behave differently under that
+switch -- one pins the ID off, the other follows it. The exported bundle's provenance does not
+record the jet-ID state at all, so a post-flip export would be indistinguishable from the current
+one while describing a different population, and ``n_btag_pnet >= 2`` is exactly the term that
+decides what :py:func:`topo_or3_weights` treats as in-support. If the ensemble asset is ever
+replaced, check the jet-ID state before assuming ``jet_id=False`` here still mirrors it.
+
 Because raw NanoAOD jets are unrecoverable after reduction, this producer must run from inside
 ``cf.SelectEvents``. Its columns then persist through ``ColumnCollection.ALL_FROM_SELECTOR``.
 
@@ -400,7 +430,9 @@ TOPO_WEIGHT_CHOICES = ("or3", "topo", "or2", "isomu24", "mu12")
     mu_pt=10.0,
     mu_eta=2.4,
     mu_iso=0.15,
-    version=5,
+    #: v6 -- the applied weights are the emulated efficiency wherever a prediction exists, not only
+    #: inside the fit preselection; see the comment above ``topo_trigger_weight``.
+    version=6,
 )
 def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     """
@@ -444,10 +476,15 @@ def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     simply biased (``E[1{eps>0.5}] != E[eps]``) and a Bernoulli draw throws away precision for
     nothing; the probability weight is unbiased in yield and correct in shape.
 
-    Outside the training support the weight falls back to the stored ``d_OR2``. For ``or3`` that is
-    a floor and not an extrapolation, since ``OR3`` contains ``OR2`` by construction; for ``topo``
-    it is neither a bound nor an estimate, so out-of-support events must be cut on
-    ``topo_in_support`` rather than trusted. The fallback exists so the column is finite.
+    **The weight is the emulated efficiency wherever one exists (v6).** It is not gated on the
+    training support. Outside the support the value is an extrapolation of the fit, and
+    ``topo_in_support`` is the flag that says so; cut on it if extrapolated rows are unwanted. Only
+    events with no evaluable muon -- no prediction at all -- keep the stored ``d_OR2``, so the
+    column stays finite everywhere. Until v5 the weight fell back to ``d_OR2`` across the whole
+    out-of-support region, which made the emulated arm a process-dependent hybrid of emulation and
+    truth (the out-of-support share is much larger for QCD mu-enriched than for tt SL) and, because
+    ``np.clip(EMPTY_FLOAT, 0, 1)`` is 0.0, zeroed the weight outright on in-support events whose
+    muon block was unreadable.
 
     Besides the weight this writes ``topo_eff_<name>`` and ``topo_eff_<name>_std`` for every
     estimator in the bundle. Three of the six have a stored decision in Summer24 NanoAODv15 and are
@@ -461,8 +498,7 @@ def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     exists. Until v3 they were 0.0 outside the support, which is indistinguishable from a real
     "efficiency is ~0" and silently biased any mean taken over a wider selection. Mask on
     ``topo_eff_<name> != EMPTY_FLOAT`` before averaging, and on ``topo_in_support`` as well if
-    extrapolated rows are unwanted. The WEIGHTS are unaffected by this and remain gated on the
-    support with the ``d_OR2`` fallback.
+    extrapolated rows are unwanted. As of v6 the WEIGHTS follow the same rule.
     """
     events = self[topo_or2_weights](events, **kwargs)
     # the stored IsoMu24 decision travels alongside, so a single pass writes each emulated
@@ -608,8 +644,11 @@ def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
                 w_cond = np.full(len(in_support), EMPTY_FLOAT, dtype=np.float64)
             else:
                 bit = np.asarray(ak.to_numpy(events.HLT[cond]), dtype=np.float64)
+                # as of v6 this follows topo_trigger_weight: gated on a prediction EXISTING, not on
+                # the event being inside the fit preselection. Outside it the value is an
+                # extrapolation, flagged by topo_in_support, not a reason to withhold the weight.
                 w_cond = np.where(
-                    (mean != EMPTY_FLOAT) & in_support,
+                    (mean != EMPTY_FLOAT) & np.isfinite(mean),
                     np.clip(mean.astype(np.float64), 0.0, 1.0) * bit,
                     EMPTY_FLOAT,
                 )
@@ -635,23 +674,47 @@ def topo_or3_weights(self: Producer, events: ak.Array, **kwargs) -> ak.Array:
     # that eps_OR2 estimates P(OR2 | x) well -- and that is not an assumption we have to take on
     # faith, because it is precisely what hbw.TopoEmulationClosure measures against the stored bit.
     #
-    # The in_support gate below is explicit as of v4. It is not a change of behaviour: until v3
-    # eff_res was 0.0 outside the support, so eff_cond came out 0 and w_built collapsed to d_or2
-    # there anyway. Now that the estimators extrapolate onto real features outside the support,
-    # that accident no longer holds, and the gate has to be written down to keep both weights
-    # bit-for-bit what they were. Extending the WEIGHT beyond the support is a separate physics
-    # decision and is deliberately not taken here.
+    # v4 and v5 gated both weights on ``in_support`` and fell back to the stored OR2 decision
+    # outside it. As of v6 they do not: the gate is on whether a PREDICTION EXISTS, not on whether
+    # the event is inside the fit's preselection. Two reasons, in order of weight.
+    #
+    # 1. It is what the emulated arm means. An efficiency weight should be the model's efficiency
+    #    everywhere the model can be evaluated; substituting the stored decision on part of the
+    #    sample makes the arm a hybrid of emulation and truth whose composition varies by process
+    #    (the out-of-support share is much larger for QCD than for tt), so no ratio between two such
+    #    arms is a clean statement about either. Outside the support the prediction is an
+    #    EXTRAPOLATION of the fit, and that is what ``topo_in_support`` is written for -- flag it,
+    #    do not silently replace it.
+    # 2. ``np.clip(EMPTY_FLOAT, 0, 1)`` is 0.0, so the old ``in_support`` gate turned a sentinel
+    #    into "this event never triggers" whenever an event passed the topo_feat preselection but
+    #    had no muon left in the reduced (tight-ID) collection to read the muon block from. That
+    #    silently zeroed the weight on events whose stored OR2 had fired, more often on tt DL than
+    #    on tt SL. Gating on ``!= EMPTY_FLOAT`` removes the failure mode
+    #    rather than patching it.
+    #
+    # The stored decision survives only where NO prediction exists at all (no evaluable muon), so
+    # the column stays finite and defined for every event.
+    has_res = (eff_res != EMPTY_FLOAT) & np.isfinite(eff_res)
     p_fail = np.clip(1.0 - eff_or2, 1e-6, None)
-    eff_cond = np.where(in_support, np.clip(eff_res / p_fail, 0.0, 1.0), 0.0)
+    eff_cond = np.where(has_res, np.clip(eff_res / p_fail, 0.0, 1.0), 0.0)
     w_built = np.clip(d_or2 + (1.0 - d_or2) * eff_cond, 0.0, 1.0)
     events = set_ak_column(events, "topo_trigger_weight_built", w_built.astype(np.float32))
 
     # the applied weight: one directly fitted efficiency, so no SF_OR2 rides on a term worth 86%
-    # of the weight and the b-tagged Mu12 leg never reaches a denominator. Outside the support
-    # there is no model, and the stored OR2 decision is the floor.
+    # of the weight and the b-tagged Mu12 leg never reaches a denominator.
     eff_w = np.asarray(ak.to_numpy(events[f"topo_eff_{self.weight_estimator}"]), dtype=np.float64)
-    w = np.where(in_support, np.clip(eff_w, 0.0, 1.0), d_or2)   # unchanged in v4
+    has_w = (eff_w != EMPTY_FLOAT) & np.isfinite(eff_w)
+    w = np.where(has_w, np.clip(eff_w, 0.0, 1.0), d_or2)
     events = set_ak_column(events, "topo_trigger_weight", w.astype(np.float32))
+
+    n_extrap = int((has_w & ~in_support).sum())
+    if n_extrap:
+        logger.info(
+            f"topo_trigger_weight is the emulated efficiency on {n_extrap} of {len(has_w)} events "
+            f"({n_extrap / len(has_w) * 100:.2f}%) that are OUTSIDE the fit preselection; those "
+            f"are extrapolations, flagged by topo_in_support == False. "
+            f"{int((~has_w).sum())} events have no prediction and keep the stored OR2 decision",
+        )
 
     # Internal consistency of estimators that were fitted independently of one another: nothing in
     # the fit enforces OR3 >= OR2 or OR3 >= TOPO, yet both hold by construction of the targets. The

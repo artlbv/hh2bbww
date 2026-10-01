@@ -12,8 +12,8 @@ makes the three directly comparable.
 * ``sl_topo_or2``  -- the stored decision of ``HLT_IsoMu24 | HLT_Mu12_IsoVVL_PFHT150_PNetBTag0p53``.
   This is the **denominator of the quoted result** and needs no emulation, because both paths are
   stored bits in Summer24 NanoAODv15.
-* ``sl_topo_or3``  -- OR2 plus the emulated TOPO residual. Requires the exported efficiency
-  ensemble, so it does not run until that artefact exists.
+* ``sl_topo_or3``  -- OR2 plus the emulated TOPO residual, i.e. the proposed menu. Needs
+  ``topo_or3_weights`` in ``--producers`` so that ``topo_trigger_weight`` exists.
 """
 
 from hbw.weight.default import base
@@ -28,8 +28,9 @@ sl_topo_or2 = base.derive("sl_topo_or2", cls_dict={"weight_columns": {
     "topo_trigger_weight_or2": [],
 }})
 
-# NOTE: not runnable yet -- topo_trigger_weight comes from the exported efficiency ensemble, which
-#       does not exist. Kept here so the comparison structure is complete and reviewable.
+# ``topo_trigger_weight`` comes from the exported efficiency ensemble via ``topo_or3_weights``.
+# That artefact now exists (prod__topo_or3_weightsV5 is on disk for all 45 non-dy_ee datasets),
+# so this arm is runnable; add ``topo_or3_weights`` to ``--producers`` when using it.
 sl_topo_or3 = base.derive("sl_topo_or3", cls_dict={"weight_columns": {
     **sl_weight_columns,
     "topo_trigger_weight": [],
